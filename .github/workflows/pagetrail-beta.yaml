@@ -1,0 +1,67 @@
+name: PageTrail beta
+
+on:
+  push:
+    branches: [main]
+    tags: ["pagetrail-v*-beta.*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pagetrail-beta-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install locked dependencies without lifecycle scripts
+        run: |
+          corepack enable
+          corepack yarn install --immutable --mode=skip-build
+      - name: Validate source and tests
+        run: |
+          npm run typecheck
+          npm run lint:pagetrail
+          npm run test:pagetrail
+      - name: Build and package beta
+        run: npm run package:pagetrail
+      - name: Verify packaged checksums
+        run: |
+          cd release/PageTrail-Replay-*-beta.*/
+          sha256sum --check SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pagetrail-beta
+          path: release/PageTrail-Replay-*-beta.*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  prerelease:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/pagetrail-v') && contains(github.ref, '-beta.')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pagetrail-beta
+          path: release-assets
+      - name: Validate tag and create beta prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          EXPECTED_TAG="$(node -e 'const r=require("./pagetrail-release.json");process.stdout.write(`pagetrail-v${r.version}-${r.channel}.${r.iteration}`)')"
+          test "$RELEASE_TAG" = "$EXPECTED_TAG"
+          gh release create "$RELEASE_TAG" release-assets/*.zip --verify-tag --prerelease --title "PageTrail Replay ${RELEASE_TAG#pagetrail-v}" --notes-file BETA-RELEASE.md

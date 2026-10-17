@@ -10,6 +10,8 @@ const IS_AGREGORE = navigator.userAgent.includes("agregore-browser");
 
 // ===========================================================================
 class BrowserRecorder extends Recorder {
+  // PageTrail: keep unexpected disconnect cleanup awaitable before export.
+  pageTrailStop: Promise<void> | null = null;
   constructor(
     // @ts-expect-error - TS7006 - Parameter 'debuggee' implicitly has an 'any' type.
     debuggee,
@@ -70,7 +72,9 @@ class BrowserRecorder extends Recorder {
         this.tabId = 0;
       }
 
-      this._stop();
+      // PageTrail: an intentional detach already awaits _stop(); do not flush/close twice.
+      if (!(this as unknown as { stopping: boolean }).stopping)
+        this.pageTrailStop = this._stop();
     };
 
     // @ts-expect-error - TS2339 - Property '_onCanceled' does not exist on type 'BrowserRecorder'.

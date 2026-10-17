@@ -53,6 +53,25 @@ class ExtAPI extends API {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   override async handleApi(request: Request, params: any, event: FetchEvent) {
+    // PageTrail local preview: no upload, signing-key or IPFS endpoints.
+    if (
+      [
+        "upload",
+        "uploadStatus",
+        "uploadDelete",
+        "ipfsAdd",
+        "ipfsRemove",
+        "ipfsDaemonUrl",
+        "publicKey",
+      ].includes(params._route)
+    ) {
+      return new Response(
+        JSON.stringify({
+          error: "Cloud sharing is disabled in PageTrail Replay.",
+        }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      );
+    }
     switch (params._route) {
       case "downloadPages":
         return await this.handleDownload(params);

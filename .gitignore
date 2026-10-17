@@ -6,3 +6,18 @@
 .DS_Store
 dist
 .yarn/install-state.gz
+release/
+test/artifacts/
+.yarn/cache/
+# Never commit private recordings, credentials or browser profiles.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.wacz
+!test/fixtures/interactive-demo.wacz
+recordings/
+captures/
+browser-profile*/
+*.log

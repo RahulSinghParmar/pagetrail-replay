@@ -4,6 +4,7 @@ on: push
 
 jobs:
   release:
+    if: github.repository == 'webrecorder/archiveweb.page'
     runs-on: ${{ matrix.os }}
 
     strategy:

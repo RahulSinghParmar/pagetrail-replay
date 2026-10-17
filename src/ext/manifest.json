@@ -1,17 +1,16 @@
 {
-  "name": "Webrecorder ArchiveWeb.page",
-  "description": "Create high-fidelity web archives directly in your browser",
-  "version": "$VERSION",
+  "name": "PageTrail Replay (Local Preview)",
+  "description": "Record visited page states, frames and resources locally. Export one self-contained session HTML or a WACZ archive.",
+  "version": "0.1.2",
+  "version_name": "PageTrail Replay 0.1.2 beta.1 · Embedded-frame session HTML",
   "permissions": [
     "debugger",
-    "contextMenus",
     "tabs",
     "activeTab",
     "storage",
     "unlimitedStorage",
-    "webRequest"
+    "downloads"
   ],
-  "content_security_policy": "script-src 'self' 'unsafe-eval'; object-src 'self'",
   "background": {
     "service_worker": "bg.js"
   },
@@ -23,7 +22,7 @@
     "default_icon": {
       "32": "$ICON"
     },
-    "default_title": "Webrecorder ArchiveWeb.page",
+    "default_title": "PageTrail Replay · Record a local website archive",
     "default_popup": "popup.html"
   },
   "web_accessible_resources": [

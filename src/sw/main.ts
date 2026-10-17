@@ -1,13 +1,9 @@
-import {
-  addProxyAllowPaths,
-  SWReplay,
-  WorkerLoader,
-} from "@webrecorder/wabac/swlib";
+import { SWReplay, WorkerLoader } from "@webrecorder/wabac/swlib";
 
 import { ExtAPI } from "./api";
 import { RecordingCollections } from "./recproxy";
 
-import REC_INDEX_HTML from "@/static/index.html";
+import REC_INDEX_HTML from "@/static/offline-reader.html";
 import RWP_INDEX_HTML from "replaywebpage/index.html";
 
 declare let self: ServiceWorkerGlobalScope;
@@ -19,10 +15,7 @@ if (self.registration) {
     convertPostToGet: false,
   };
 
-  if (self.location.origin.startsWith("chrome-extension://")) {
-    defaultConfig["injectScripts"] = ["/ruffle/ruffle.js"];
-  }
-  addProxyAllowPaths(["/ruffle/"]);
+  // PageTrail preview does not inject Flash/Ruffle or enable live proxy paths.
 
   const staticData = new Map();
 

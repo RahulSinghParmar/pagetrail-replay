@@ -1,11 +1,12 @@
 import { makeZip } from "client-zip";
 
-import { Deflate } from "pako";
+import pako from "pako";
+const { Deflate } = pako;
 
 import { v5 as uuidv5 } from "uuid";
 
 import { createSHA256 } from "hash-wasm";
-import { type IHasher } from "hash-wasm/dist/lib/WASMInterface.js";
+import type { IHasher } from "hash-wasm/dist/lib/WASMInterface.js";
 
 import { getSurt, WARCRecord, WARCSerializer } from "warcio";
 
@@ -18,8 +19,8 @@ import {
   type ResourceEntry,
   type ExtraOpts,
 } from "@webrecorder/wabac/swlib";
-import { type DataSignature, type Signer } from "./keystore";
-import { type ExtPageEntry } from "./recproxy";
+import type { DataSignature, Signer } from "./keystore";
+import type { ExtPageEntry } from "./recproxy";
 
 export type SizeCallback = (size: number) => void;
 
@@ -670,7 +671,7 @@ class Downloader {
   *generateCompressedCDX(filename: string) {
     let offset = 0;
 
-    let chunkDeflater: Deflate | null = null;
+    let chunkDeflater: InstanceType<typeof Deflate> | null = null;
     let count = 0;
     let key = "";
 

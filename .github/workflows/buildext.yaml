@@ -7,6 +7,7 @@ on:
 
 jobs:
   release:
+    if: github.repository == 'webrecorder/archiveweb.page'
     runs-on: ubuntu-latest
 
     steps:

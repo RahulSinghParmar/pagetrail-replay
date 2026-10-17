@@ -1,14 +1,10 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    html {
-      width: 400px;
-    }
-  </style>
-  <script src="./popup.js"></script>
-</head>
-<body>
-  <wr-popup-viewer></wr-popup-viewer>
-</body>
-</html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>PageTrail Replay</title><link rel="stylesheet" href="pagetrail.css"><script defer src="popup.js"></script></head><body class="popup"><main>
+<small>LOCAL WEBSITE ARCHIVE · PREVIEW 0.1.2</small><h1>PageTrail Replay</h1><span id="state" class="state">Connecting…</span>
+<p>Record visited page states, embedded course frames and assets. Export one website-session HTML with offline navigation—no companion folder.</p>
+<section class="card"><dl><dt>Site</dt><dd id="site">Current tab</dd><dt>Network archive</dt><dd id="bytes">—</dd><dt>Visual coverage</dt><dd id="visual">—</dd><dt>Pending resources</dt><dd id="pending">—</dd></dl></section>
+<p id="notice" role="status">Start a session on the site you want to retain.</p><p id="error" role="alert"></p>
+<label id="consent"><input id="ack" type="checkbox"><span>I may save this content locally. Archives can contain personal data, URLs and API responses. Start/Resume reloads the tab.</span></label>
+<div class="buttons"><button id="start" class="primary full">Start new session</button><button id="pause">Pause</button><button id="resume">Resume</button><button id="finish">Finish session</button><button id="library" class="full">Export HTML / Markdown / WACZ</button></div>
+<p class="muted">Records this tab and its frames only. Other tabs are not followed. Top-level navigation outside the starting host and its nested subdomains pauses recording. Required third-party resources may be included.</p>
+<p class="muted">No screen images or automated quiz clicks. Visual HTML states retain captured layout; original scripts, server actions and media are not replayed. Pause briefly after revealing each section. Preview, not production-ready.</p>
+</main></body></html>

@@ -2243,8 +2243,9 @@ class Recorder {
         }
       }
 
-      return accum.join("\n");
     }
+    // PageTrail: embedded lesson documents must not be discarded after the outer shell.
+    return accum.join("\n");
   }
 
   // parseTextFromDom(dom) {
