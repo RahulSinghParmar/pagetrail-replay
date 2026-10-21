@@ -4,7 +4,10 @@ import { readFile, stat } from "node:fs/promises";
 import { resolve, extname, sep } from "node:path";
 const source = process.argv.includes("--source");
 const root = resolve(source ? "test/fixtures/site" : "dist/reader");
-const port = source ? 4176 : 4175;
+const portArg = process.argv.find((arg) => arg.startsWith("--port="));
+const port = portArg ? Number(portArg.slice(7)) : source ? 4176 : 4175;
+if (!Number.isInteger(port) || port < 1024 || port > 65535)
+  throw new Error("Invalid local port.");
 const mime = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -40,14 +43,17 @@ const server = createServer(async (req, res) => {
       pathname = "/index.html";
     if (source && pathname === "/embedded") pathname = "/embedded.html";
     if (!source && pathname === "/") pathname = "/index.html";
-    const file =
-      !source && pathname === "/demo.wacz"
-        ? resolve("test/fixtures/interactive-demo.wacz")
-        : resolve(root, "." + pathname);
-    if (
-      file !== resolve("test/fixtures/interactive-demo.wacz") &&
-      !file.startsWith(root + sep)
-    ) {
+    const fixture =
+      !source && ["/demo.wacz", "/controls.wacz"].includes(pathname)
+        ? resolve(
+            "test/fixtures/" +
+              (pathname === "/controls.wacz"
+                ? "replay-controls.wacz"
+                : "interactive-demo.wacz"),
+          )
+        : null;
+    const file = fixture ? fixture : resolve(root, "." + pathname);
+    if (file !== fixture && !file.startsWith(root + sep)) {
       res.writeHead(403).end();
       return;
     }

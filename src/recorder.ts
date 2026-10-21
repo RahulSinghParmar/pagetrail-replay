@@ -1,4 +1,6 @@
 import { RequestResponseInfo } from "./requestresponseinfo";
+import { CaptureWork } from "./pagetrail/capture-work";
+import type { CaptureObserver } from "./pagetrail/coverage";
 
 import {
   getCustomRewriter,
@@ -62,6 +64,9 @@ type FetchEntry = {
 
 // ===========================================================================
 class Recorder {
+  // PageTrail: observe outcomes without putting request contents in diagnostics.
+  captureObserver?: CaptureObserver;
+  readonly captureWork = new CaptureWork();
   archiveStorage = false;
   archiveCookies = false;
   archiveFlash = false;
@@ -280,6 +285,9 @@ class Recorder {
     clearInterval(this._bgFetchId);
 
     this.flushPending();
+    // Body reads/commits are also started by event handlers and flushPending.
+    // Do not close the archive DB while those fire-and-forget jobs still use it.
+    await this.captureWork.idle();
     // @ts-expect-error - TS2339 - Property 'running' does not exist on type 'Recorder'.
     this.running = false;
     // @ts-expect-error - TS2551 - Property 'pendingRequests' does not exist on type 'Recorder'. Did you mean 'pendingReqResp'?
@@ -386,12 +394,18 @@ class Recorder {
 
       // @ts-expect-error - TS2339 - Property '_cacheSessionTotal' does not exist on type 'Recorder'.
       if (this._cacheSessionTotal > 0) {
-        // @ts-expect-error - TS2339 - Property '_doIncSizes' does not exist on type 'Recorder'. | TS2339 - Property '_cacheSessionTotal' does not exist on type 'Recorder'. | TS2339 - Property '_cacheSessionNew' does not exist on type 'Recorder'.
-        await this._doIncSizes(this._cacheSessionTotal, this._cacheSessionNew);
-        // @ts-expect-error - TS2339 - Property '_cacheSessionTotal' does not exist on type 'Recorder'.
-        this._cacheSessionTotal = 0;
-        // @ts-expect-error - TS2339 - Property '_cacheSessionNew' does not exist on type 'Recorder'.
-        this._cacheSessionNew = 0;
+        const counts = this as unknown as {
+          _cacheSessionTotal: number;
+          _cacheSessionNew: number;
+          _doIncSizes(total: number, written: number): Promise<unknown>;
+        };
+        const total = counts._cacheSessionTotal,
+          written = counts._cacheSessionNew;
+        await counts._doIncSizes(total, written);
+        // Commits can arrive while metadata is saving. Leave their increments
+        // for the next flush instead of resetting them to zero.
+        counts._cacheSessionTotal -= total;
+        counts._cacheSessionNew -= written;
       }
     } finally {
       // @ts-expect-error - TS2339 - Property '_cleaningUp' does not exist on type 'Recorder'.
@@ -813,6 +827,7 @@ class Recorder {
           ) {
             this.fullCommit(reqresp, sessions);
           } else {
+            this.captureObserver?.outcome(reqresp, "failed", "NETWORK_FAILED");
             console.log(
               `Loading Failed for: ${reqresp.url} ${params.errorText}`,
             );
@@ -822,7 +837,14 @@ class Recorder {
       }
 
       case "Network.requestServedFromCache":
-        this.removeReqResp(params.requestId);
+        {
+          if (this.captureObserver) {
+            // Cache hits can still expose their body through CDP. Keep the
+            // request until loadingFinished; only report a gap if reading fails.
+            const request = this.pendingReqResp(params.requestId);
+            request.captureFromCache = true;
+          } else this.removeReqResp(params.requestId);
+        }
         break;
 
       case "Network.responseReceivedExtraInfo":
@@ -1128,7 +1150,8 @@ class Recorder {
     currPage.finished = finished;
 
     // @ts-expect-error - TS2339 - Property '_doAddPage' does not exist on type 'Recorder'.
-    const res = this._doAddPage(currPage);
+    const pageWrite = this._doAddPage(currPage);
+    const res = this.captureWork.track(Promise.resolve(pageWrite));
     // @ts-expect-error - TS2339 - Property '_cachePageInfo' does not exist on type 'Recorder'.
     if (currPage === this._cachePageInfo) {
       // @ts-expect-error - TS2339 - Property '_cachePageInfo' does not exist on type 'Recorder'.
@@ -1137,20 +1160,30 @@ class Recorder {
     return res;
   }
 
-  // @ts-expect-error - TS7006 - Parameter 'data' implicitly has an 'any' type. | TS7006 - Parameter 'pageInfo' implicitly has an 'any' type.
-  async commitResource(data, pageInfo) {
+  commitResource(data: TODOFixMe, pageInfo?: TODOFixMe) {
+    return this.captureWork.track(this._commitResource(data, pageInfo));
+  }
+
+  async _commitResource(data: TODOFixMe, pageInfo?: TODOFixMe) {
     const payloadSize = data.payload.length;
     // @ts-expect-error - TS2339 - Property 'pageInfo' does not exist on type 'Recorder'.
     pageInfo = pageInfo || this.pageInfo;
+    let writtenSize: number;
+    try {
+      // @ts-expect-error - TS2339 - Property '_doAddResource' does not exist on type 'Recorder'.
+      writtenSize = await this._doAddResource(data);
+      if (writtenSize === undefined)
+        throw new Error("Archive storage did not confirm the resource.");
+      this.captureObserver?.stored(data, true);
+    } catch (error) {
+      this.captureObserver?.stored(data, false);
+      throw error;
+    }
     pageInfo.size += payloadSize;
-
     // @ts-expect-error - TS2339 - Property 'sizeTotal' does not exist on type 'Recorder'.
     this.sizeTotal += payloadSize;
     // @ts-expect-error - TS2339 - Property 'numUrls' does not exist on type 'Recorder'.
     this.numUrls++;
-
-    // @ts-expect-error - TS2339 - Property '_doAddResource' does not exist on type 'Recorder'.
-    const writtenSize = await this._doAddResource(data);
 
     // @ts-expect-error - TS2339 - Property 'sizeNew' does not exist on type 'Recorder'.
     this.sizeNew += writtenSize;
@@ -1578,8 +1611,13 @@ class Recorder {
     return url && (url.startsWith("https:") || url.startsWith("http:"));
   }
 
-  // @ts-expect-error - TS7006 - Parameter 'params' implicitly has an 'any' type. | TS7006 - Parameter 'sessions' implicitly has an 'any' type.
-  async handleLoadingFinished(params, sessions) {
+  handleLoadingFinished(params: TODOFixMe, sessions: TODOFixMe[]) {
+    return this.captureWork.track(
+      this._handleLoadingFinished(params, sessions),
+    );
+  }
+
+  async _handleLoadingFinished(params: TODOFixMe, sessions: TODOFixMe[]) {
     const reqresp = this.removeReqResp(params.requestId);
 
     if (!reqresp?.url) {
@@ -1595,7 +1633,7 @@ class Recorder {
 
     if (!reqresp.fetch && !payload) {
       // empty response, don't attempt to store it
-      if (params.encodedDataLength) {
+      if (params.encodedDataLength || reqresp.captureFromCache) {
         payload = await this.fetchPayloads(
           params,
           reqresp,
@@ -1604,7 +1642,18 @@ class Recorder {
         );
       }
       if (!payload?.length) {
-        return;
+        if (reqresp.status === 204 || reqresp.status === 205)
+          payload = new Uint8Array();
+        else {
+          this.captureObserver?.outcome(
+            reqresp,
+            "unavailable",
+            reqresp.captureFromCache
+              ? "CACHE_BODY_UNAVAILABLE"
+              : "BODY_UNAVAILABLE",
+          );
+          return;
+        }
       }
       reqresp.payload = payload;
     }
@@ -1612,8 +1661,11 @@ class Recorder {
     this.fullCommit(reqresp, sessions);
   }
 
-  // @ts-expect-error - TS7006 - Parameter 'reqresp' implicitly has an 'any' type. | TS7006 - Parameter 'sessions' implicitly has an 'any' type.
-  async fullCommit(reqresp, sessions) {
+  fullCommit(reqresp: TODOFixMe, sessions: TODOFixMe[]) {
+    return this.captureWork.track(this._fullCommit(reqresp, sessions));
+  }
+
+  async _fullCommit(reqresp: TODOFixMe, sessions: TODOFixMe[]) {
     //const requestId = reqresp.requestId;
 
     // let doneResolve;
@@ -1631,6 +1683,13 @@ class Recorder {
         this.pageInfo,
         this.archiveCookies,
       );
+      if (data) this.captureObserver?.bind(data, reqresp);
+      else
+        this.captureObserver?.outcome(
+          reqresp,
+          "unavailable",
+          "BODY_UNAVAILABLE",
+        );
 
       // top-level URL is a non-GET request
       if (
@@ -1680,10 +1739,14 @@ class Recorder {
       }
 
       if (data) {
-        // @ts-expect-error - TS2554 - Expected 2 arguments, but got 1.
         await this.commitResource(data);
+        const page = (
+          this as unknown as { pageInfo: { url: string; ts: number } }
+        ).pageInfo;
+        if (!sessions.length && data.url === page.url) page.ts = data.ts;
       }
     } catch (e) {
+      this.captureObserver?.outcome(reqresp, "failed", "STORAGE_FAILED");
       console.log("error committing", e);
     }
 
@@ -1765,6 +1828,13 @@ class Recorder {
         params.type,
       )
     ) {
+      const skipped = {
+        url: params.request.url,
+        method: params.request.method,
+        resourceType: params.type,
+      };
+      this.captureObserver?.requested(skipped);
+      this.captureObserver?.outcome(skipped, "unsupported", "ENGINE_SKIPPED");
       this.removeReqResp(params.requestId);
       return;
     }
@@ -1783,15 +1853,15 @@ class Recorder {
       reqresp.fillResponseRedirect(params);
       // @ts-expect-error - TS2339 - Property 'pageInfo' does not exist on type 'Recorder'.
       data = reqresp.toDBRecord(null, this.pageInfo, this.archiveCookies);
+      if (data) this.captureObserver?.bind(data, reqresp);
     }
 
+    // Bind the old hop before mutating the request object. Register the next
+    // hop synchronously so response events cannot race a slow redirect write.
+    const redirectWrite = data ? this.commitResource(data) : null;
     reqresp.fillRequest(params);
-
-    // commit redirect response, if any
-    if (data) {
-      // @ts-expect-error - TS2554 - Expected 2 arguments, but got 1.
-      await this.commitResource(data);
-    }
+    this.captureObserver?.requested(reqresp);
+    if (redirectWrite) await redirectWrite;
   }
 
   // @ts-expect-error - TS7006 - Parameter 'params' implicitly has an 'any' type. | TS7006 - Parameter 'sessions' implicitly has an 'any' type.
@@ -2117,8 +2187,6 @@ class Recorder {
   flushPending() {
     // @ts-expect-error - TS2551 - Property 'pendingRequests' does not exist on type 'Recorder'. Did you mean 'pendingReqResp'?
     const oldPendingReqs = this.pendingRequests;
-    // @ts-expect-error - TS2339 - Property 'pageInfo' does not exist on type 'Recorder'.
-    const pageInfo = this.pageInfo;
     // @ts-expect-error - TS2551 - Property 'pendingRequests' does not exist on type 'Recorder'. Did you mean 'pendingReqResp'?
     this.pendingRequests = {};
 
@@ -2131,26 +2199,13 @@ class Recorder {
       if (reqresp.payload) {
         // @ts-expect-error - TS2571 - Object is of type 'unknown'.
         console.log(`Committing Finished ${id} - ${reqresp.url}`);
-        // @ts-expect-error - TS2571 - Object is of type 'unknown'. | TS2571 - Object is of type 'unknown'.
-        const data = reqresp.toDBRecord(
-          // @ts-expect-error - TS2571 - Object is of type 'unknown'. | TS2571 - Object is of type 'unknown'.
-          reqresp.payload,
-          pageInfo,
-          this.archiveCookies,
-        );
-
-        if (data) {
-          // @ts-expect-error - TS2554 - Expected 2 arguments, but got 1.
-          this.commitResource(data);
-        }
-
-        // top-level page resource
-        // @ts-expect-error - TS2571 - Object is of type 'unknown'.
-        if (data && reqresp.url === pageInfo.url) {
-          // @ts-expect-error - TS2571 - Object is of type 'unknown'.
-          pageInfo.ts = reqresp.ts;
-        }
+        this.fullCommit(reqresp, []);
       } else {
+        this.captureObserver?.outcome(
+          reqresp as object,
+          "unavailable",
+          "BODY_UNAVAILABLE",
+        );
         // @ts-expect-error - TS2571 - Object is of type 'unknown'.
         console.log(`Discarding Payload-less ${reqresp.url}`);
       }
@@ -2242,7 +2297,6 @@ class Recorder {
           }
         }
       }
-
     }
     // PageTrail: embedded lesson documents must not be discarded after the outer shell.
     return accum.join("\n");

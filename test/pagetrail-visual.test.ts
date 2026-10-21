@@ -136,6 +136,19 @@ test("older archives cannot silently export a text-only document as website HTML
   old.states = [];
   assert.throws(() => visualHtml(old, "Old archive"), /no visual page states/);
 });
+test("visual HTML reports per-state progress and rejects oversized output before buffering it all", () => {
+  const phases: string[] = [];
+  const result = visualHtml(archive(), "Progress fixture", {
+    progress: (value) =>
+      phases.push(`${value.phase}:${value.done}/${value.total}`),
+  });
+  assert(result.html.length);
+  assert.deepEqual(phases, ["embedding:0/2", "embedding:1/2", "embedding:2/2"]);
+  assert.throws(
+    () => visualHtml(archive(), "Small budget", { limitBytes: 64 }),
+    /preview budget/,
+  );
+});
 test("standalone runtime builds inline assets and follows a recorded embedded-frame action", () => {
   const input = archive();
   input.states[1].action = {

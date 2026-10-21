@@ -1,8 +1,11 @@
 // PageTrail Replay. SPDX-License-Identifier: AGPL-3.0-or-later
+import { inScope, scopePath } from "./scope";
+export { inScope } from "./scope";
 export type Session = {
   id: string;
   tabId: number;
   origin: string;
+  pathPrefix?: string;
   title: string;
   startedAt: string;
   state:
@@ -21,27 +24,9 @@ type Dependencies = {
   tab: (id: number) => Promise<Tab>;
   create: (title: string) => Promise<string>;
   attach: (session: Session) => Promise<void>;
-  detach: (session: Session) => Promise<void>;
+  detach: (session: Session) => Promise<void | string>;
   now: () => string;
 };
-
-export function inScope(origin: string, raw: string): boolean {
-  try {
-    const base = new URL(origin),
-      next = new URL(raw);
-    return (
-      !next.username &&
-      !next.password &&
-      ["http:", "https:"].includes(next.protocol) &&
-      next.protocol === base.protocol &&
-      next.port === base.port &&
-      (next.hostname === base.hostname ||
-        next.hostname.endsWith("." + base.hostname))
-    );
-  } catch {
-    return false;
-  }
-}
 
 export function createSessionController(deps: Dependencies) {
   let session: Session | null = null;
@@ -79,7 +64,8 @@ export function createSessionController(deps: Dependencies) {
         "Finishing pending resources. Please keep this tab open…",
       );
       try {
-        await deps.detach(session);
+        const coverage = await deps.detach(session);
+        if (coverage) notice += " " + coverage;
       } catch {
         await save(
           "ERROR",
@@ -95,7 +81,7 @@ export function createSessionController(deps: Dependencies) {
   async function attach() {
     if (!session) throw new Error("No recording session.");
     const tab = await deps.tab(session.tabId);
-    if (!inScope(session.origin, tab.url))
+    if (!inScope(session.origin, tab.url, session.pathPrefix))
       throw new Error(
         "Return to the original site in the recording tab before resuming.",
       );
@@ -136,7 +122,11 @@ export function createSessionController(deps: Dependencies) {
     },
     async command(
       action: string,
-      options: { tabId?: number; acknowledged?: boolean } = {},
+      options: {
+        tabId?: number;
+        acknowledged?: boolean;
+        pathPrefix?: string;
+      } = {},
     ) {
       await ready;
       return serial(async () => {
@@ -152,6 +142,7 @@ export function createSessionController(deps: Dependencies) {
           if (!Number.isInteger(options.tabId))
             throw new Error("Choose a normal website tab.");
           const tab = await deps.tab(options.tabId!);
+          const pathPrefix = scopePath(options.pathPrefix);
           const url = new URL(tab.url);
           if (
             !["http:", "https:"].includes(url.protocol) ||
@@ -160,6 +151,10 @@ export function createSessionController(deps: Dependencies) {
           )
             throw new Error(
               "Choose a normal HTTP(S) site without credentials in its URL.",
+            );
+          if (!inScope(url.origin, tab.url, pathPrefix))
+            throw new Error(
+              "The current page is outside the selected recording path.",
             );
           const title =
             (tab.title || url.hostname).slice(0, 160) +
@@ -170,6 +165,7 @@ export function createSessionController(deps: Dependencies) {
             id,
             tabId: tab.id,
             origin: url.origin,
+            ...(pathPrefix ? { pathPrefix } : {}),
             title,
             startedAt: deps.now(),
             state: "PAUSED",
@@ -203,7 +199,7 @@ export function createSessionController(deps: Dependencies) {
         if (
           session?.state === "RECORDING" &&
           session.tabId === tabId &&
-          !inScope(session.origin, url)
+          !inScope(session.origin, url, session.pathPrefix)
         ) {
           await pause(
             "Left the recording site. Capture paused; return to the original site and Resume.",

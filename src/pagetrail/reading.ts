@@ -18,6 +18,7 @@ export type ReadingBook = {
   title: string;
   sections: ReadingSection[];
   missing: string[];
+  coverage?: string;
 };
 const SKIP = new Set([
   "head",
@@ -177,6 +178,10 @@ export function readingHtml(book: ReadingBook): string {
           .map((item) => `<li>${e(item)}</li>`)
           .join("")}</ul></aside>`
       : ""
+  }${
+    book.coverage
+      ? `<aside><h2>Capture coverage</h2><p>${e(book.coverage)}</p></aside>`
+      : ""
   }${book.sections
     .map(
       (section, i) =>
@@ -205,6 +210,8 @@ export function readingMarkdown(book: ReadingBook): string {
   return `# ${e(
     book.title,
   )}\n\n> Reading export of captured source text, not validated notes or an interactive website. Repeated visits to one URL are consolidated. Original layout, scripts and images are not included.\n\n${
+    book.coverage ? "## Capture coverage\n\n" + e(book.coverage) + "\n\n" : ""
+  }${
     book.missing.length
       ? "## Coverage warning\n\nNo readable text was available for:\n\n" +
         book.missing.map((item) => "- " + e(item)).join("\n") +

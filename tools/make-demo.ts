@@ -3,6 +3,9 @@
 import { writeFile } from "node:fs/promises";
 import { Downloader, type DBCollection } from "../src/sw/downloader.ts";
 const base = "http://127.0.0.1:4176";
+const output =
+  process.argv.find((arg) => arg.startsWith("--output="))?.slice(9) ||
+  "test/fixtures/interactive-demo.wacz";
 const paths = [
   "/",
   "/lesson?unit=tools",
@@ -36,15 +39,13 @@ for (const path of paths) {
   });
 }
 resources.sort((a, b) => a.url.localeCompare(b.url));
-const pages = paths
-  .slice(0, 3)
-  .map((path, i) => ({
-    id: "demo-" + i,
-    url: base + path,
-    ts,
-    title: ["Learning Library", "Tools lesson", "Reference guide"][i],
-    size: 0,
-  }));
+const pages = paths.slice(0, 3).map((path, i) => ({
+  id: "demo-" + i,
+  url: base + path,
+  ts,
+  title: ["Learning Library", "Tools lesson", "Reference guide"][i],
+  size: 0,
+}));
 const store = {
   getAllPages: async () => pages,
   loadPayload: async (resource: { payload: Uint8Array }) => resource.payload,
@@ -75,10 +76,10 @@ const response = await new DemoDownloader({
 if (!(response instanceof Response))
   throw new Error("Native WACZ exporter failed.");
 const data = new Uint8Array(await response.arrayBuffer());
-await writeFile("test/fixtures/interactive-demo.wacz", data);
+await writeFile(output, data);
 console.log(
   JSON.stringify({
-    file: "test/fixtures/interactive-demo.wacz",
+    file: output,
     bytes: data.length,
     resources: resources.length,
     pages: pages.length,

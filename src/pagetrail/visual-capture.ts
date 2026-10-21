@@ -60,6 +60,11 @@ export function captureLoop(deps: {
     return pending;
   };
   return {
+    async flush() {
+      clear();
+      await pending;
+      if (active) await run();
+    },
     changed(next?: Action) {
       if (!active) return;
       if (next) action = next;

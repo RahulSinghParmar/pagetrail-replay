@@ -11,10 +11,24 @@ const routes = {
     "test/artifacts/reading-demo.html",
     "text/html;charset=utf-8",
   ],
-  "/session.html": ["test/artifacts/visual-session-demo.html", "text/html;charset=utf-8"],
+  "/learning.html": [
+    "test/artifacts/phase5-learning/index.html",
+    "text/html;charset=utf-8",
+  ],
+  "/session.html": [
+    "test/artifacts/visual-session-demo.html",
+    "text/html;charset=utf-8",
+  ],
+  "/pagetrail.css": ["static/pagetrail.css", "text/css;charset=utf-8"],
+  "/dashboard-test.html": ["static/dashboard.html", "text/html;charset=utf-8"],
 };
 const server = createServer(async (req, res) => {
-  const route = routes[new URL(req.url, "http://127.0.0.1:4177").pathname];
+  const pathname = new URL(req.url, "http://127.0.0.1:4177").pathname;
+  const route =
+    routes[pathname] ||
+    (/^\/[a-zA-Z0-9_.-]+\.js$/.test(pathname)
+      ? ["dist/test-export" + pathname, "text/javascript;charset=utf-8"]
+      : null);
   if (!route) {
     res.writeHead(404).end();
     return;
@@ -24,7 +38,14 @@ const server = createServer(async (req, res) => {
       "Content-Type": route[1],
       "Cache-Control": "no-store",
     });
-    res.end(await readFile(route[0]));
+    const bytes = await readFile(route[0]);
+    res.end(
+      pathname === "/dashboard-test.html"
+        ? bytes
+            .toString()
+            .replace('src="dashboard.js"', 'src="/dashboard-demo.js"')
+        : bytes,
+    );
   } catch {
     res.end("Test artifact is not available yet.");
   }

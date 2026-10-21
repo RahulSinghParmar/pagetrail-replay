@@ -1,1 +1,19 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PageTrail · Offline reader</title><style>#local-toolbar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:#eaf3ed;color:#193f30;padding:9px 16px;border-bottom:1px solid #bed5c6;font:14px/1.4 system-ui}#local-toolbar label{font-weight:600}#local-archive{max-width:280px;margin-left:8px}#local-notice{font-size:12px}replay-app-main{display:block;height:calc(100vh - 64px)}</style><script src="./ui.js"></script></head><body><aside id="local-toolbar"><label>Open local WACZ<input id="local-archive" type="file" accept=".wacz,.wacz.zip,.warc,.gz,.har" aria-label="Open local WACZ"></label><span id="local-notice" role="status">Local file input · no upload · use Home to choose another archive.</span></aside><replay-app-main></replay-app-main></body></html>
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PageTrail · Offline reader</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f8faf9;color:#193f30;font:14px/1.4 system-ui;height:100vh;display:flex;flex-direction:column}
+#local-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 18px;border-bottom:1px solid #c9d9cf;background:#fff}
+strong{margin-right:10px}button,.file-label{border:1px solid #bbcec2;border-radius:7px;background:#fff;color:inherit;padding:8px 11px;font:inherit;cursor:pointer}
+button:hover,.file-label:hover,button[aria-pressed=true]{background:#eaf3ed}button:focus-visible,.file-label:focus-within{outline:3px solid #4b8e6a;outline-offset:2px}
+.file-label{position:relative;overflow:hidden;background:#193f30;color:#fff}.file-label input{position:absolute;inset:0;opacity:0;width:100%;cursor:pointer}
+.file-label:hover{background:#315c46}
+#local-notice{padding:7px 18px;font-size:12px;color:#466454;border-bottom:1px solid #e2e9e5}pagetrail-reader{position:relative;display:flex;flex:1;min-height:0}
+</style><script defer src="./ui.js"></script></head><body>
+<nav id="local-toolbar" aria-label="Offline reader"><strong>PageTrail <small>· Offline</small></strong>
+<label class="file-label">Open recording<input id="local-archive" type="file" accept=".wacz,.wacz.zip,.warc,.warc.gz,.har" aria-label="Open local recording"></label>
+<button id="reader-back" type="button">Back</button><button id="reader-forward" type="button">Forward</button><button id="reader-reload" type="button">Reload page</button>
+<button id="recorded-pages" type="button" aria-pressed="false">Recorded pages</button><small id="engine-status">Checking local replay engine…</small></nav>
+<div id="local-notice" role="status">Choose a local WACZ recording. No upload. This reader needs a local server, not an internet connection.</div>
+<pagetrail-reader></pagetrail-reader></body></html>

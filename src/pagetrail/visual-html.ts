@@ -7,6 +7,8 @@ import {
 } from "parse5";
 import type { VisualArchive, VisualState } from "./visual-store";
 import { escapeHtml, textFromHtml, type SavedPage } from "./reading";
+import { OperationError } from "./operations";
+import type { ExportProgress } from "./export-protocol";
 type Node = DefaultTreeAdapterMap["node"];
 type Element = DefaultTreeAdapterMap["element"];
 const utf8 = new TextDecoder();
@@ -23,13 +25,21 @@ function base64(bytes: Uint8Array) {
 }
 export function visualReadingPages(archive: VisualArchive): SavedPage[] {
   const assets = new Map(archive.assets.map((asset) => [asset.key, asset]));
+  const textCache = new Map<string, string>();
   return archive.states.flatMap((state) =>
     state.documents.map((doc, i) => ({
       id: state.id + ":" + i,
       url: doc.url,
       title: state.title + (i ? " · embedded course" : ""),
       ts: Date.parse(state.time),
-      text: textFromHtml(utf8.decode(assets.get(doc.key)?.bytes)),
+      text: (() => {
+        if (!textCache.has(doc.key))
+          textCache.set(
+            doc.key,
+            textFromHtml(utf8.decode(assets.get(doc.key)?.bytes)),
+          );
+        return textCache.get(doc.key)!;
+      })(),
     })),
   );
 }
@@ -44,9 +54,15 @@ function frameBridge(frame: string, token: string, index: number) {
 export function visualHtml(
   archive: VisualArchive,
   title: string,
+  options: {
+    progress?: (value: ExportProgress) => void;
+    limitBytes?: number;
+    coverage?: string;
+  } = {},
 ): { html: string; missing: number } {
   if (!archive.states.length)
-    throw new Error(
+    throw new OperationError(
+      "NO_VISUAL_STATES",
       "This older recording has no visual page states. A text-only file cannot become the webpage. Keep its WACZ; make a new recording with 0.1.2 for self-contained session HTML.",
     );
   const token = crypto.randomUUID(),
@@ -56,6 +72,17 @@ export function visualHtml(
       Object.create(null),
     missing = new Set<string>(),
     cssDedup = new Map<string, string>();
+  const cssCache = new Map<VisualState, Map<string, string>>();
+  let estimatedBytes = 0;
+  const limit = options.limitBytes ?? 100 * 1024 * 1024;
+  const budget = (bytes: number) => {
+    estimatedBytes += bytes;
+    if (estimatedBytes > limit)
+      throw new OperationError(
+        "EXPORT_TOO_LARGE",
+        "The generated HTML exceeds the preview budget.",
+      );
+  };
   const csp = `default-src 'none';script-src 'nonce-${nonce}';style-src 'unsafe-inline' data:;img-src data:;font-src data:;frame-src about:;media-src 'none';connect-src 'none';object-src 'none';base-uri 'none';form-action 'none'`;
   function resolve(
     raw: string,
@@ -96,6 +123,10 @@ export function visualHtml(
       return "data:,";
     }
     if (asset.mime === "text/css") {
+      const cacheKey = key + "|" + base + "|" + raw;
+      const cache = cssCache.get(state) || new Map<string, string>();
+      cssCache.set(state, cache);
+      if (cache.has(cacheKey)) return cache.get(cacheKey)!;
       const next = new Set(stack).add(key);
       const css = rewriteCss(
         utf8.decode(asset.bytes),
@@ -111,8 +142,11 @@ export function visualHtml(
           mime: "text/css;charset=utf-8",
           data: base64(new TextEncoder().encode(css)),
         };
+        budget(packed[id].data.length);
       }
-      return "__PT_ASSET_" + id + "__";
+      const token = "__PT_ASSET_" + id + "__";
+      cache.set(cacheKey, token);
+      return token;
     }
     if (
       !/^(image\/(png|jpeg|gif|webp|avif|svg\+xml|x-icon|vnd.microsoft.icon)|font\/[\w.+-]+|application\/(font-[\w-]+|vnd.ms-fontobject|octet-stream))$/.test(
@@ -123,6 +157,7 @@ export function visualHtml(
       return "data:,";
     }
     const id = "bin-" + key.split(":").pop();
+    if (packed[id]) return "__PT_ASSET_" + id + "__";
     let bytes = asset.bytes;
     if (asset.mime === "image/svg+xml") {
       // SVG is displayed only as an image; strip active/external content defensively too.
@@ -135,6 +170,7 @@ export function visualHtml(
       bytes = new TextEncoder().encode(svg);
     }
     packed[id] ||= { mime: asset.mime, data: base64(bytes) };
+    budget(packed[id].data.length);
     return "__PT_ASSET_" + id + "__";
   }
   function rewriteCss(
@@ -329,18 +365,33 @@ export function visualHtml(
     );
     return "<!doctype html>" + html;
   }
-  const states = archive.states.map((state) => ({
-    url: state.url,
-    title: state.title,
-    time: state.time,
-    action: state.action,
-    html: documentHtml(state.root, state.url, state),
-  }));
+  const states = archive.states.map((state, index) => {
+    options.progress?.({
+      phase: "embedding",
+      done: index,
+      total: archive.states.length,
+    });
+    const html = documentHtml(state.root, state.url, state);
+    budget(new TextEncoder().encode(json(html)).byteLength);
+    cssCache.delete(state);
+    return {
+      url: state.url,
+      title: state.title,
+      time: state.time,
+      action: state.action,
+      html,
+    };
+  });
+  options.progress?.({
+    phase: "embedding",
+    done: states.length,
+    total: states.length,
+  });
   const payload = {
     token,
     states,
     assets: packed,
-    warnings: [...missing],
+    warnings: [...missing, ...(options.coverage ? [options.coverage] : [])],
     captureError: archive.meta.error,
   };
   const runtime = `
@@ -379,7 +430,7 @@ document.getElementById('details').textContent=book.warnings.join('\\n')||'No mi
 show(Math.max(0,Math.min(book.states.length-1,Number(location.hash.replace('#state-',''))-1||0)));
 window.addEventListener('hashchange',()=>{const i=Number(location.hash.replace('#state-',''))-1;if(Number.isInteger(i)&&i!==current)show(i)});
 `;
-  return {
+  const result = {
     missing: missing.size,
     html: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${escapeHtml(
       csp,
@@ -391,4 +442,10 @@ window.addEventListener('hashchange',()=>{const i=Number(location.hash.replace('
       payload,
     )}</script><script nonce="${nonce}">${runtime}</script></body></html>`,
   };
+  if (new Blob([result.html]).size > limit)
+    throw new OperationError(
+      "EXPORT_TOO_LARGE",
+      "The generated HTML exceeds the preview budget.",
+    );
+  return result;
 }

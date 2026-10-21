@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { openDB } from "idb";
 import { parseCapture, type CapturePart } from "./mhtml";
+import { OperationError } from "./operations";
+import type { ExportProgress } from "./export-protocol";
 export type RecordedAction = {
   frame: string;
   selector: string;
@@ -36,7 +38,22 @@ export type VisualArchive = {
 };
 const MAX_BYTES = 100 * 1024 * 1024;
 async function database() {
-  return openDB("pagetrail-visual-v1", 1, {
+  let rejectBlocked!: (error: unknown) => void;
+  const blocked = new Promise<never>((_, reject) => {
+    rejectBlocked = reject;
+  });
+  const opening = openDB("pagetrail-visual-v1", 1, {
+    blocked() {
+      rejectBlocked(
+        new OperationError(
+          "STORAGE_BLOCKED",
+          "Local storage is blocked by another library tab.",
+        ),
+      );
+    },
+    blocking(_oldVersion, _newVersion, _event) {
+      void opening.then((db) => db.close());
+    },
     upgrade(db) {
       db.createObjectStore("assets", { keyPath: "key" });
       db.createObjectStore("states", { keyPath: "id" }).createIndex(
@@ -46,6 +63,12 @@ async function database() {
       db.createObjectStore("meta", { keyPath: "session" });
     },
   });
+  try {
+    return await Promise.race([opening, blocked]);
+  } catch (error) {
+    void opening.then((db) => db.close()).catch(() => {});
+    throw error;
+  }
 }
 const empty = (session: string): VisualMeta => ({
   session,
@@ -185,9 +208,14 @@ export async function saveCaptureParts(
 }
 export async function readVisualArchive(
   session: string,
+  options: {
+    progress?: (value: ExportProgress) => void;
+    documentsOnly?: boolean;
+  } = {},
 ): Promise<VisualArchive> {
   const db = await database();
   try {
+    options.progress?.({ phase: "reading-states" });
     const states = (await db.getAllFromIndex(
       "states",
       "session",
@@ -199,16 +227,37 @@ export async function readVisualArchive(
       states.flatMap((state) => [
         state.root,
         ...state.documents.map((doc) => doc.key),
-        ...Object.values(state.refs),
+        ...(options.documentsOnly ? [] : Object.values(state.refs)),
       ]),
     );
-    for (const key of keys) {
-      const asset = (await db.get("assets", key)) as VisualAsset;
-      if (!asset)
-        throw new Error(
-          "A recorded visual resource is missing. Original archive preserved; no partial HTML was exported.",
-        );
-      assets.push(asset);
+    const pending = [...keys];
+    let bytes = 0;
+    for (let offset = 0; offset < pending.length; offset += 64) {
+      const tx = db.transaction("assets", "readonly");
+      const batch = (await Promise.all(
+        pending.slice(offset, offset + 64).map((key) => tx.store.get(key)),
+      )) as (VisualAsset | undefined)[];
+      await tx.done;
+      for (const asset of batch) {
+        if (!asset)
+          throw new OperationError(
+            "MISSING_ASSET",
+            "A recorded visual resource is missing; source archive preserved.",
+          );
+        bytes += asset.bytes.byteLength;
+        if (bytes > 100 * 1024 * 1024)
+          throw new OperationError(
+            "EXPORT_TOO_LARGE",
+            "Referenced resources exceed the 100 MB preview budget.",
+          );
+        assets.push(asset);
+      }
+      options.progress?.({
+        phase: "reading-assets",
+        done: assets.length,
+        total: pending.length,
+        bytes,
+      });
     }
     return {
       meta: (await db.get("meta", session)) || empty(session),

@@ -81,8 +81,11 @@
   ],
   "scripts": {
     "build:pagetrail": "webpack --config webpack.pagetrail.cjs --mode production",
+    "build:reader": "webpack --config webpack.reader.cjs --mode production && node tools/build-reader.mjs",
     "build:export-demo": "webpack --config webpack.export-demo.cjs --mode production",
+    "verify:beta": "node tools/verify-beta.mjs",
     "demo:exports": "node tools/export-demo-server.mjs",
+    "demo:capture": "node tools/capture-demo-server.mjs",
     "test:pagetrail": "node --import ./tools/test-resolve.mjs --experimental-strip-types --test test/pagetrail-*.test.ts",
     "typecheck": "tsc --noEmit",
     "lint:pagetrail": "eslint src/pagetrail/",

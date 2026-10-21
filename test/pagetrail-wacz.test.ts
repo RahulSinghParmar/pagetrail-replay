@@ -73,3 +73,43 @@ test("archive retains original scripts, links, frames and distinct API responses
   );
   assert(!responses.has(base + "/never-captured"));
 });
+test("replay control fixture retains original error, redirect and API records", async () => {
+  const archive = "test/fixtures/replay-controls.wacz";
+  const read = (path: string) =>
+    execFileSync("unzip", ["-p", archive, path], {
+      maxBuffer: 4 * 1024 * 1024,
+    });
+  const pack = JSON.parse(read("datapackage.json").toString());
+  for (const resource of pack.resources)
+    assert.equal(
+      "sha256:" +
+        createHash("sha256").update(read(resource.path)).digest("hex"),
+      resource.hash,
+    );
+  async function* chunks() {
+    yield new Uint8Array(read("archive/data.warc.gz"));
+  }
+  const urls: string[] = [];
+  for await (const record of new WARCParser(chunks())) {
+    const body = await record.contentText();
+    if (record.warcType !== "response") continue;
+    urls.push(record.warcTargetURI!);
+    if (record.warcTargetURI?.endsWith("/recorded404")) {
+      assert.equal(record.httpHeaders?.statusCode, 404);
+      assert.match(body, /RECORDED-404-CHECK/);
+    }
+    if (record.warcTargetURI?.endsWith("/redirect")) {
+      assert.equal(record.httpHeaders?.statusCode, 302);
+      assert.match(
+        record.httpHeaders?.headers.get("location") || "",
+        /\/controls$/,
+      );
+    }
+    if (record.warcTargetURI?.endsWith("/controls")) {
+      assert.match(body, /history.pushState/);
+      assert.match(body, /new WebSocket/);
+    }
+  }
+  assert.equal(urls.length, 4);
+  assert(!urls.some((url) => url.includes("missing-")));
+});

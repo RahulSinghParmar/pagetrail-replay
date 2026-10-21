@@ -1,16 +1,15 @@
 // PageTrail Replay. SPDX-License-Identifier: AGPL-3.0-or-later
 import { CollectionLoader } from "@webrecorder/wabac/swlib";
-import { BrowserRecorder } from "../ext/browser-recorder";
-import { createSessionController, inScope } from "./session";
-import { cleanHeaders, sensitiveEndpoint } from "./privacy";
-import { saveCapture, visualMeta, visualError } from "./visual-store";
-import {
-  captureLoop,
-  OBSERVER_BINDING,
-  OBSERVER_SOURCE,
-  OBSERVER_WORLD,
-} from "./visual-capture";
+import { LocalRecorder } from "./capture-recorder";
+import { createSessionController } from "./session";
+import { visualMeta } from "./visual-store";
 import type { Session } from "./session";
+import { recordDiagnostic } from "./diagnostics";
+import { bounded, safeErrorCode } from "./operations";
+import { CoverageLedger, coverageText } from "./coverage";
+import { readCoverage, saveCoverage } from "./coverage-store";
+import { createCrawler, type CrawlState } from "./crawl";
+import { inScope, scopePath } from "./scope";
 
 type Engine = LocalRecorder & {
   running?: boolean;
@@ -24,218 +23,40 @@ type Engine = LocalRecorder & {
     numPending?: number;
   };
 };
-type Resource = {
-  url: string;
-  reqHeaders?: Record<string, string> | null;
-  respHeaders?: Record<string, string> | null;
-  payload: Uint8Array;
-};
+
 const loader = new CollectionLoader();
 const RECORDERS: Record<string, Engine> = {};
 self.recorders = RECORDERS;
 const KEY = "pageTrailReplaySession";
-let captureOrigin = "";
-
-class LocalRecorder extends BrowserRecorder {
-  visual: ReturnType<typeof captureLoop> | null = null;
-  visualSession: Session | null = null;
-  observerScripts: { id: string; sessions: never[] }[] = [];
-  observerContexts: { id: number; sessions: never[] }[] = [];
-  beginVisual(session: Session) {
-    this.visualSession = session;
-    this.visual = captureLoop({
-      capture: async (action) => {
-        const before = await chrome.tabs.get(session.tabId);
-        if (
-          !inScope(session.origin, before.url || "") ||
-          sensitiveEndpoint(before.url || "")
-        )
-          return;
-        let timeout: ReturnType<typeof setTimeout> | undefined;
-        const snapshot = await Promise.race([
-          this.send("Page.captureSnapshot", {
-            format: "mhtml",
-          } as never) as Promise<{ data?: string }>,
-          new Promise<never>((_, reject) => {
-            timeout = setTimeout(
-              () =>
-                reject(
-                  new Error(
-                    "Visual capture timed out. Saved resources remain available; check coverage before export.",
-                  ),
-                ),
-              15000,
-            );
-          }),
-        ]).finally(() => clearTimeout(timeout));
-        const after = await chrome.tabs.get(session.tabId);
-        if (
-          after.url !== before.url ||
-          !inScope(session.origin, after.url || "")
-        )
-          return;
-        if (!snapshot?.data)
-          throw new Error("Browser did not return a visual page capture.");
-        const meta = await visualMeta(session.id);
-        await saveCapture(
-          session.id,
-          snapshot.data,
-          { url: before.url!, title: before.title || session.title },
-          action && meta.states
-            ? { ...action, from: meta.states - 1 }
-            : undefined,
-        );
-      },
-      error: async (error) => {
-        await visualError(
-          session.id,
-          error instanceof Error ? error.message : String(error),
-        );
-      },
-    });
-  }
-  override async sessionInit(sessions: never[]) {
-    await super.sessionInit(sessions);
-    if (!this.visual) return;
-    try {
-      await this.send("Runtime.enable", null, sessions);
-      await this.send(
-        "Runtime.addBinding",
-        {
-          name: OBSERVER_BINDING,
-          executionContextName: OBSERVER_WORLD,
-        } as never,
-        sessions,
-      );
-      const script = (await this.send(
-        "Page.addScriptToEvaluateOnNewDocument",
-        {
-          source: OBSERVER_SOURCE,
-          worldName: OBSERVER_WORLD,
-          runImmediately: true,
-        } as never,
-        sessions,
-      )) as { identifier: string };
-      this.observerScripts.push({
-        id: script.identifier,
-        sessions: [...sessions],
-      });
-    } catch {
-      // Non-document targets (workers) do not expose Page. Top-level capture is checked at Finish.
-    }
-  }
-  override async processMessage(
-    method: string,
-    params: Record<string, unknown>,
-    sessions: never[],
-  ) {
-    if (method === "Runtime.executionContextDestroyed")
-      this.observerContexts = this.observerContexts.filter(
-        (context) =>
-          !(
-            context.id === params.executionContextId &&
-            context.sessions.join() === sessions.join()
-          ),
-      );
-    if (method === "Runtime.executionContextsCleared")
-      this.observerContexts = this.observerContexts.filter(
-        (context) => context.sessions.join() !== sessions.join(),
-      );
-    if (method === "Runtime.executionContextCreated") {
-      const context = params.context as { id: number; name: string };
-      if (context.name === OBSERVER_WORLD)
-        this.observerContexts.push({ id: context.id, sessions: [...sessions] });
-    }
-    if (
-      method === "Runtime.bindingCalled" &&
-      params.name === OBSERVER_BINDING &&
-      this.observerContexts.some(
-        (context) =>
-          context.id === params.executionContextId &&
-          context.sessions.join() === sessions.join(),
-      )
-    ) {
-      try {
-        const data = JSON.parse(String(params.payload).slice(0, 4000));
-        const action =
-          typeof data.frame === "string" && typeof data.selector === "string"
-            ? {
-                frame: data.frame.slice(0, 2000),
-                selector: data.selector.slice(0, 1500),
-                label: String(data.label || "").slice(0, 120),
-              }
-            : undefined;
-        this.visual?.changed(action);
-      } catch {
-        /* Malformed page notification has no recording authority. */
-      }
-      return;
-    }
-    if (
-      [
-        "Page.loadEventFired",
-        "Page.frameStoppedLoading",
-        "Page.navigatedWithinDocument",
-      ].includes(method)
-    )
-      this.visual?.changed();
-    return super.processMessage(method, params, sessions);
-  }
-  async endVisual(final: boolean) {
-    await this.visual?.stop(final);
-    this.visual = null;
-    for (const context of this.observerContexts)
-      await this.send(
-        "Runtime.evaluate",
-        {
-          expression: "globalThis.__ptVisualStop?.()",
-          contextId: context.id,
-        } as never,
-        context.sessions,
-      ).catch(() => {});
-    for (const script of this.observerScripts) {
-      await this.send(
-        "Page.removeScriptToEvaluateOnNewDocument",
-        { identifier: script.id } as never,
-        script.sessions,
-      ).catch(() => {});
-      await this.send(
-        "Runtime.removeBinding",
-        { name: OBSERVER_BINDING } as never,
-        script.sessions,
-      ).catch(() => {});
-    }
-    this.observerContexts = [];
-    this.observerScripts = [];
-  }
-  override _doStop() {
-    // Unexpected disconnect: cancel future jobs without trying to use a detached debugger.
-    void this.visual?.stop(false).catch(console.warn);
-    this.visual = null;
-    super._doStop();
-  }
-  override async _doAddResource(data: Resource) {
-    // Filter before storage, not only at export. Body/query secrets still require review.
-    if (sensitiveEndpoint(data.url)) return 0;
-    let status;
-    try {
-      status = await chrome.tabs.get(
-        (this as unknown as { tabId: number }).tabId,
-      );
-    } catch {
-      return 0;
-    }
-    if (!inScope(captureOrigin, status.url || "")) return 0;
-    return super._doAddResource({
-      ...data,
-      reqHeaders: cleanHeaders(data.reqHeaders),
-      respHeaders: cleanHeaders(data.respHeaders),
-    });
-  }
-}
 
 const controller = createSessionController({
-  load: async () => (await chrome.storage.local.get(KEY))[KEY] || null,
+  load: async () => {
+    const session: Session | null =
+      (await chrome.storage.local.get(KEY))[KEY] || null;
+    if (
+      session &&
+      ["STARTING", "RECORDING", "FINISHING"].includes(session.state)
+    ) {
+      try {
+        await bounded(
+          (async () => {
+            const saved = await readCoverage(session.id, true);
+            if (saved) {
+              const recovered = new CoverageLedger(session.id, saved);
+              recovered.finish(false);
+              await saveCoverage(recovered.batch());
+            }
+          })(),
+          { ms: 5000 },
+        );
+      } catch {
+        void recordDiagnostic("capture", "CAPTURE_FAILED", {
+          errorCode: "STORAGE_FAILED",
+        });
+      }
+    }
+    return session;
+  },
   save: async (session) => {
     await chrome.storage.local.set({ [KEY]: session });
   },
@@ -250,7 +71,6 @@ const controller = createSessionController({
     return coll.name as string;
   },
   attach: async (session) => {
-    captureOrigin = session.origin;
     await chrome.storage.local.set({
       archiveCookies: "0",
       archiveStorage: "0",
@@ -258,12 +78,23 @@ const controller = createSessionController({
       archiveFlash: "0",
       autorunBehaviors: "0",
     });
+    const previous = await readCoverage(session.id, true);
     const engine = new LocalRecorder(
       { tabId: session.tabId },
       { collId: session.id, collLoader: loader, autorun: false },
     ) as unknown as Engine;
-    engine.beginVisual(session);
+    engine.onLimit = () => {
+      void crawler
+        .command("pause")
+        .then(() => controller.command("pause"))
+        .catch(() => {});
+    };
+    engine.beginVisual(
+      session,
+      new CoverageLedger(session.id, previous || undefined),
+    );
     RECORDERS[session.tabId] = engine;
+    await engine.persistCoverage();
     await engine.attach();
     if (!engine.running) throw new Error("Recorder did not connect.");
     engine.visual?.changed();
@@ -271,17 +102,40 @@ const controller = createSessionController({
   detach: async (session) => {
     const engine = RECORDERS[session.tabId];
     if (engine) {
-      await engine.endVisual(Boolean(engine.running && engine.isAttached));
-      if (engine.pageTrailStop) await engine.pageTrailStop;
-      if (engine.running) await engine.detach();
-      else {
-        if (engine.isAttached) await engine._doDetach();
-        engine._doStop();
-      }
+      await engine.finishRecording();
       delete RECORDERS[session.tabId];
+      return coverageText(engine.coverage.snapshot());
     }
   },
 });
+
+const CRAWL_KEY = "pageTrailControlledCrawl";
+let crawlEngine: Engine | null = null;
+const crawler = createCrawler({
+  load: async () =>
+    ((await chrome.storage.local.get(CRAWL_KEY))[CRAWL_KEY] as CrawlState) ||
+    null,
+  save: async (state) => {
+    await chrome.storage.local.set({ [CRAWL_KEY]: state });
+  },
+  visit: async (url, config, signal) => {
+    const session = await controller.status();
+    if (
+      !session ||
+      session.id !== config.sessionId ||
+      session.state !== "RECORDING"
+    )
+      throw new Error("Resume the matching recording first.");
+    crawlEngine = RECORDERS[session.tabId];
+    if (!crawlEngine) throw new Error("Recorder disconnected.");
+    return crawlEngine.crawler.visit(url, config, signal);
+  },
+  release: async () => {
+    await crawlEngine?.crawler.release();
+    crawlEngine = null;
+  },
+});
+let controlQueue: Promise<unknown> = Promise.resolve();
 
 async function status() {
   const session = await controller.status();
@@ -296,10 +150,19 @@ async function status() {
         bytes: item.config.metadata?.size || 0,
         created: item.config.ctime,
         visual: await visualMeta(item.name),
+        coverage:
+          RECORDERS[session?.tabId || -1]?.visualSession?.id === item.name
+            ? RECORDERS[session!.tabId].coverage.snapshot()
+            : (await readCoverage(item.name))?.summary,
       })),
   );
   archives.sort((a, b) => (b.created || 0) - (a.created || 0));
-  return { session, archives, stats: engine?.getStatusMsg() || null };
+  return {
+    session,
+    archives,
+    stats: engine?.getStatusMsg() || null,
+    crawl: await crawler.status(),
+  };
 }
 
 chrome.runtime.onMessage.addListener(
@@ -309,6 +172,11 @@ chrome.runtime.onMessage.addListener(
       action?: string;
       tabId?: number;
       acknowledged?: boolean;
+      pathPrefix?: string;
+      crawlPath?: string;
+      maxPages?: number;
+      maxDepth?: number;
+      crawlAcknowledged?: boolean;
     },
     sender: { id?: string; url?: string },
     respond: (value: unknown) => void,
@@ -328,30 +196,107 @@ chrome.runtime.onMessage.addListener(
       return false;
     }
     void (async () => {
+      if (message.action === "session-status")
+        return { session: await controller.status() };
+      const began = performance.now();
+      if (message.action && message.action !== "status") {
+        const work = controlQueue.then(async () => {
+          const action = message.action!;
+          if (action.startsWith("crawl-")) {
+            const operation = action.slice(6);
+            if (operation === "pause" || operation === "stop")
+              return crawler.command(operation);
+            if (operation !== "start" && operation !== "resume")
+              throw new Error("Unknown crawl action.");
+            const session = await controller.status();
+            if (!session || session.state !== "RECORDING")
+              throw new Error("Start or resume recording before crawling.");
+            if (operation === "resume") {
+              const prior = await crawler.status();
+              if (prior?.config.sessionId !== session.id)
+                throw new Error("This crawl belongs to a different recording.");
+              return crawler.command("resume");
+            }
+            if (!message.crawlAcknowledged)
+              throw new Error("Confirm the crawl boundary before starting.");
+            if (!message.crawlPath?.trim())
+              throw new Error("Choose an explicit crawl path.");
+            const path = scopePath(message.crawlPath) || "/";
+            if (
+              !inScope(
+                session.origin,
+                session.origin + path,
+                session.pathPrefix,
+              )
+            )
+              throw new Error(
+                "The crawl path must stay inside the recording boundary.",
+              );
+            const tab = await chrome.tabs.get(session.tabId);
+            return crawler.command("start", {
+              sessionId: session.id,
+              origin: session.origin,
+              path,
+              seed: tab.url || "",
+              maxPages: Number(message.maxPages),
+              maxDepth: Number(message.maxDepth),
+            });
+          }
+          if (["pause", "finish", "start"].includes(action))
+            await crawler.command(action === "pause" ? "pause" : "stop");
+          return controller.command(action, message);
+        });
+        controlQueue = work.catch(() => {});
+        await work;
+      }
       if (message.action && message.action !== "status")
-        await controller.command(message.action, message);
+        void recordDiagnostic("control", "RECORDER_ACTION_FINISHED", {
+          outcome: "success",
+          elapsedMs: performance.now() - began,
+        });
       return await status();
     })()
       .then(respond)
-      .catch((error) =>
+      .catch((error) => {
+        void recordDiagnostic("control", "RECORDER_ACTION_FAILED", {
+          outcome: "failure",
+          errorCode: safeErrorCode(error),
+        });
         respond({
           error:
             error instanceof Error ? error.message : "Recorder action failed.",
-        }),
-      );
+        });
+      });
     return true;
   },
 );
 chrome.tabs.onUpdated.addListener((id: number, change: { url?: string }) => {
   if (change.url)
-    void controller.navigated(id, change.url).catch(console.error);
+    void (async () => {
+      const session = await controller.status();
+      if (
+        session?.tabId === id &&
+        !inScope(session.origin, change.url!, session.pathPrefix)
+      )
+        await crawler.command("pause");
+      await controller.navigated(id, change.url!);
+    })().catch(console.error);
 });
 chrome.tabs.onRemoved.addListener((id: number) => {
-  void controller.interrupted(id).catch(console.error);
+  void interrupt(id);
 });
 chrome.debugger.onDetach.addListener((tab: { tabId: number }) => {
-  void controller.interrupted(tab.tabId).catch(console.error);
+  void interrupt(tab.tabId);
 });
+async function interrupt(id: number) {
+  try {
+    if ((await controller.status())?.tabId === id)
+      await crawler.command("pause");
+    await controller.interrupted(id);
+  } catch (error) {
+    console.error(error);
+  }
+}
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.action.setBadgeBackgroundColor({ color: "#21624c" });
 });

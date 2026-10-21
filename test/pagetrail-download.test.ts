@@ -97,3 +97,67 @@ test("local response conversion propagates stream errors and blocks empty or ove
     /broken stream/,
   );
 });
+test("hung Save picker times out and cancels an ID returned after timeout", async () => {
+  let resolve!: (id: number) => void,
+    canceled = 0,
+    revoked = false;
+  const pending = new Promise<number>((done) => {
+    resolve = done;
+  });
+  await assert.rejects(
+    confirmedDownload(
+      new Blob(["test"]),
+      "file.html",
+      {
+        download: () => pending,
+        search: async () => [],
+        cancel: async (id) => {
+          canceled = id;
+        },
+      },
+      {
+        dialogMs: 5,
+        makeUrl: () => "blob:test",
+        revoke: () => {
+          revoked = true;
+        },
+      },
+    ),
+    /Save dialog did not finish/,
+  );
+  resolve(9);
+  await new Promise((done) => setTimeout(done, 0));
+  assert.equal(canceled, 9);
+  assert(revoked);
+});
+test("download cancellation cancels the native download without removing source data", async () => {
+  const controller = new AbortController(),
+    states: string[] = [];
+  let canceled = 0;
+  await assert.rejects(
+    confirmedDownload(
+      new Blob(["test"]),
+      "file.html",
+      {
+        download: async () => 7,
+        search: async () => {
+          controller.abort();
+          return [{ state: "in_progress" }];
+        },
+        cancel: async (id) => {
+          canceled = id;
+        },
+      },
+      {
+        signal: controller.signal,
+        progress: (value) => states.push(value.phase),
+        makeUrl: () => "blob:test",
+        revoke: () => {},
+        wait: async () => {},
+      },
+    ),
+    /Export canceled/,
+  );
+  assert.equal(canceled, 7);
+  assert.deepEqual(states, ["save-dialog", "downloading"]);
+});

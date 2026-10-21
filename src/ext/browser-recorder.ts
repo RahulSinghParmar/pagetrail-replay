@@ -354,7 +354,7 @@ class BrowserRecorder extends Recorder {
   // @ts-expect-error - TS7006 - Parameter 'totalSize' implicitly has an 'any' type. | TS7006 - Parameter 'writtenSize' implicitly has an 'any' type.
   _doIncSizes(totalSize, writtenSize) {
     // @ts-expect-error - TS2339 - Property 'collLoader' does not exist on type 'BrowserRecorder'. | TS2339 - Property 'collId' does not exist on type 'BrowserRecorder'.
-    this.collLoader.updateSize(this.collId, totalSize, writtenSize);
+    return this.collLoader.updateSize(this.collId, totalSize, writtenSize);
   }
 
   // @ts-expect-error - TS7006 - Parameter 'method' implicitly has an 'any' type. | TS7006 - Parameter 'params' implicitly has an 'any' type. | TS7006 - Parameter 'promise' implicitly has an 'any' type.

@@ -9,6 +9,7 @@ module.exports = (env, argv) => {
     dashboard: "./src/pagetrail/dashboard.ts",
     ui: "./src/pagetrail/reader.ts",
     sw: "./src/sw/main.ts",
+    "reader-sw": "./src/pagetrail/reader-sw.ts",
   };
   config.output.path = path.join(__dirname, "dist", "ext");
   config.devtool = false;

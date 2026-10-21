@@ -17,6 +17,7 @@ test/artifacts/
 *.key
 *.wacz
 !test/fixtures/interactive-demo.wacz
+!test/fixtures/replay-controls.wacz
 recordings/
 captures/
 browser-profile*/

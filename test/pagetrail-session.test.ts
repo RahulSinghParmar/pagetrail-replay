@@ -78,7 +78,7 @@ test("recording outside the originating site pauses, other tabs do not affect it
   await t.ctrl.command("start", consent);
   await t.ctrl.navigated(99, "https://outside.test/");
   assert.equal(t.stopped.length, 0);
-  await t.ctrl.navigated(42, "https://assets.learn.example.test/frame");
+  await t.ctrl.navigated(42, "https://learn.example.test/another-lesson");
   assert.equal(t.stopped.length, 0);
   await t.ctrl.navigated(42, "https://outside.test/");
   assert.equal((await t.ctrl.status())?.state, "PAUSED");
@@ -149,14 +149,44 @@ test("site scope does not accept suffix attacks, credentials protocol or other p
     "https://secret@learn.example.test",
     "javascript:alert(1)",
     "https://sibling.example.test",
+    "https://child.learn.example.test/path?unit=2#tab",
   ])
     assert(!inScope("https://learn.example.test", url));
   assert(
     inScope(
       "https://learn.example.test",
-      "https://child.learn.example.test/path?unit=2#tab",
+      "https://learn.example.test/path?unit=2#tab",
     ),
   );
+});
+test("optional path validates before creating an archive and survives pause/resume", async () => {
+  const t = setup();
+  await assert.rejects(
+    t.ctrl.command("start", { ...consent, pathPrefix: "/other" }),
+    /outside/,
+  );
+  await assert.rejects(
+    t.ctrl.command("start", { ...consent, pathPrefix: "/course/../account" }),
+    /parent/,
+  );
+  assert.equal(t.created.length, 0);
+  const session = await t.ctrl.command("start", {
+    ...consent,
+    pathPrefix: "/course/",
+  });
+  assert.equal(session?.pathPrefix, "/course");
+  await t.ctrl.navigated(42, "https://learn.example.test/coursework");
+  assert.equal((await t.ctrl.status())?.state, "PAUSED");
+  t.setUrl("https://learn.example.test/coursework");
+  await assert.rejects(t.ctrl.command("resume"), /original site/);
+  t.setUrl("https://learn.example.test/course/lesson?unit=2");
+  assert.equal((await t.ctrl.command("resume"))?.state, "RECORDING");
+});
+test("a nested subdomain is not implicitly authorised for top-level navigation", async () => {
+  const t = setup();
+  await t.ctrl.command("start", consent);
+  await t.ctrl.navigated(42, "https://child.learn.example.test/");
+  assert.equal((await t.ctrl.status())?.state, "PAUSED");
 });
 test("sensitive headers are removed case-insensitively without losing resource MIME", () => {
   const source = {

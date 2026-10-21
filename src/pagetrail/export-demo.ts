@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Synthetic integration fixture: real IndexedDB + native exporter, never employer data.
 import { CollectionLoader } from "@webrecorder/wabac/swlib";
-import { createLocalExport, type ExportFormat } from "./export";
+import { runExportJob } from "./export-job";
+import { phaseLabel, type ExportFormat } from "./export-protocol";
 import { saveLocalFile } from "./download";
 import { saveCapture, visualMeta } from "./visual-store";
 import { fixtureCapture } from "./visual-fixture";
@@ -89,11 +90,12 @@ for (const button of buttons)
   button.addEventListener("click", () => {
     for (const item of buttons) item.disabled = true;
     void (async () => {
-      const file = await createLocalExport(
-        id,
-        button.dataset.format as ExportFormat,
-        (text) => {
-          notice.textContent = text;
+      const file = await runExportJob(
+        { id, format: button.dataset.format as ExportFormat },
+        {
+          progress: (value) => {
+            notice.textContent = phaseLabel(value);
+          },
         },
       );
       await saveLocalFile(file.blob, file.filename);

@@ -1,0 +1,17 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>PageTrail replay controls test</title>
+<style>body{font:16px/1.6 system-ui;margin:32px;color:#193f30}button,a{margin:6px;padding:8px}section{border:1px solid #ccc;padding:16px;margin:16px 0}#section-2{margin-top:180px}</style>
+<h1>Original controls · offline test</h1><p>Synthetic content only. The original source server is stopped.</p>
+<nav><a href="/recorded404">Recorded HTTP 404</a><a href="/missing-page">Uncaptured page</a><a href="/redirect">Recorded redirect</a><a href="#section-2">Same-page section</a></nav>
+<section><button id="api">Fetch recorded response</button><button id="missing">Fetch uncaptured response</button><button id="spa">Change local SPA view</button><button id="socket">Try live WebSocket</button><button id="popup">Try new window</button><p id="result" role="status">Ready</p></section>
+<form action="http://127.0.0.1:4176/submit" method="post"><button>Try form submission</button></form>
+<details><summary>Expand original detail</summary><p>DETAIL-CHECK: native disclosure works.</p></details>
+<section id="section-2"><h2>Same-page section</h2><p>ANCHOR-CHECK: this section is inside the original page.</p></section>
+<script>
+const result = document.getElementById('result');
+document.getElementById('api').onclick = async () => { const r=await fetch('/api/value'); result.textContent=(await r.json()).message; };
+document.getElementById('missing').onclick = async () => { const r=await fetch('/missing-api'); result.textContent='MISSING-API-CHECK: '+r.status; };
+document.getElementById('spa').onclick = () => {history.pushState({},'', '/controls?tab=details'); result.textContent='SPA-CHECK: original JavaScript changed the view';};
+document.getElementById('socket').onclick = () => { const ws=new WebSocket('ws://127.0.0.1:4176/'); ws.onerror=()=>{result.textContent='SOCKET-CHECK: live connection unavailable';}; };
+document.getElementById('popup').onclick = () => {result.textContent=window.open('/missing-page','_blank')?'POPUP-CHECK: unexpectedly opened':'POPUP-CHECK: blocked';};
+document.addEventListener('securitypolicyviolation', e=>{if(e.effectiveDirective==='connect-src')result.textContent='SOCKET-CHECK: blocked by offline policy';});
+</script></html>

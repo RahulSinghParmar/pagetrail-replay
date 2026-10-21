@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Synthetic test-only Chromium-format MIME capture. Never uses employer content.
-export function fixtureCapture(step: number, cidSuffix = "test"): string {
+export function fixtureCapture(
+  step: number,
+  cidSuffix = "test",
+  padding = "",
+): string {
   const root = `<!doctype html><html><head><title>Course player</title><link rel="stylesheet" href="https://fixture.example/course.css"></head><body><header class="banner"><b>Learning Lab</b><span>Completed course · Offline demonstration</span></header><main><h1>Physical tools · practice library</h1><p>This simulated outer player embeds its lesson from a different host.</p><iframe title="Embedded lesson" src="cid:lesson-${cidSuffix}" style="width:100%;height:440px;border:0"></iframe></main><script>fetch('https://must-not-run.example/')</script><input type="password" value="DO_NOT_EXPORT"></body></html>`;
   const lesson = `<!doctype html><html><head><title>Embedded lesson</title><link rel="stylesheet" href="https://fixture.example/course.css"></head><body><article class="lesson"><small>LESSON ${step} OF 2 · SYNTHETIC CONTENT</small><h1>${
     step === 1 ? "Inspect before use" : "Label both ends"
@@ -41,6 +45,11 @@ export function fixtureCapture(step: number, cidSuffix = "test"): string {
       data: '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect width="96" height="96" rx="20" fill="#c6dfb0"/><path d="M27 68L62 33M51 24L68 23L74 40L62 43L53 34Z" fill="none" stroke="#285440" stroke-width="9" stroke-linecap="round"/></svg>',
     },
   ];
+  if (padding)
+    parts[1].data = parts[1].data.replace(
+      "</article>",
+      `<p>${padding}</p></article>`,
+    );
   const encode = (text: string) =>
     btoa(
       Array.from(new TextEncoder().encode(text), (byte) =>

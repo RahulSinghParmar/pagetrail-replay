@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { join, basename, dirname } from "node:path";
 await mkdir("dist/reader", { recursive: true });
-for (const file of ["ui.js", "sw.js"])
+for (const file of ["ui.js", "sw.js", "reader-sw.js"])
   await cp("dist/ext/" + file, "dist/reader/" + file);
 await cp("static/offline-reader.html", "dist/reader/index.html");
 const manifest = JSON.parse(await readFile("dist/ext/manifest.json", "utf8"));
@@ -47,6 +47,7 @@ for (const file of [
   "LICENSE.md",
   "pagetrail-release.json",
   "BETA-RELEASE.md",
+  "BETA-ACCEPTANCE.md",
 ])
   await cp(file, root + "/" + file);
 await cp("test/VERIFICATION.md", root + "/VERIFICATION.md");
