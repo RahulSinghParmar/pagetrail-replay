@@ -8,6 +8,7 @@ const $ = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 let busy = false;
 let tabId: number | undefined;
+let currentOrigin = "Unavailable";
 let lastData: Status | null = null;
 let polling = false;
 let generation = 0;
@@ -52,9 +53,21 @@ function render(data: Status) {
   for (const id of ["crawl-path", "crawl-pages", "crawl-depth", "crawl-ack"])
     $<HTMLInputElement>(id).disabled = busy || crawl?.state === "RUNNING";
   $("state").textContent = s?.state || "READY";
-  $("site").textContent = s ? s.origin + (s.pathPrefix || "") : "Current tab";
+  $("site").textContent = s
+    ? s.origin + (s.pathPrefix || "")
+    : "No active recording";
+  $("current-site").textContent = currentOrigin;
   $("notice").textContent =
     s?.notice || "Start a session on the site you want to retain.";
+  if (
+    s &&
+    s.state !== "STOPPED" &&
+    currentOrigin !== "Unavailable" &&
+    s.origin !== currentOrigin
+  )
+    $("notice").textContent =
+      `An unfinished ${s.state} recording belongs to ${s.origin}, not this tab (${currentOrigin}). ` +
+      "Finish that session before starting here; saved data will remain available in the library.";
   $("bytes").textContent =
     (
       (data.archives.find((item) => item.id === s?.id)?.bytes || 0) / 1048576
@@ -160,8 +173,16 @@ $("library").addEventListener("click", () => {
 });
 void chrome.tabs
   .query({ active: true, currentWindow: true })
-  .then((tabs: { id: number }[]) => {
+  .then((tabs: { id?: number; url?: string }[]) => {
     tabId = tabs[0]?.id;
+    try {
+      const url = new URL(tabs[0]?.url || "");
+      currentOrigin = /^https?:$/.test(url.protocol)
+        ? url.origin
+        : "Not a normal website";
+    } catch {
+      currentOrigin = "Unavailable";
+    }
     return run();
   });
 const timer = setInterval(() => {
