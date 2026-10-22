@@ -1,14 +1,21 @@
 {
-  "name": "@webrecorder/archivewebpage",
-  "productName": "ArchiveWeb.page",
+  "name": "pagetrail-replay",
+  "productName": "PageTrail Replay",
   "version": "0.17.1",
   "main": "index.js",
-  "description": "Create Web Archives directly in your browser",
+  "description": "Record authorised browsing sessions locally and export portable offline archives and structured notes.",
+  "homepage": "https://github.com/RahulSinghParmar/pagetrail-replay#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/webrecorder/archiveweb.page.git"
+    "url": "git+https://github.com/RahulSinghParmar/pagetrail-replay.git"
   },
-  "author": "Webrecorder Software",
+  "bugs": {
+    "url": "https://github.com/RahulSinghParmar/pagetrail-replay/issues"
+  },
+  "author": "Rahul Singh Parmar",
+  "contributors": [
+    "Webrecorder Software and ArchiveWeb.page contributors"
+  ],
   "license": "AGPL-3.0-or-later",
   "dependencies": {
     "@fortawesome/fontawesome-free": "^5.13.0",

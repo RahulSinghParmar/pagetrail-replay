@@ -1,6 +1,6 @@
 # PageTrail Replay 0.1.2-beta.1
 
-Private beta of the PageTrail local session recorder, based on Webrecorder ArchiveWeb.page. Phase 6 adds a repeatable local verification gate and an installed-Edge acceptance checklist; it does not publish a new release.
+Public beta of the PageTrail local session recorder, based on Webrecorder ArchiveWeb.page. This release adds a repeatable verification gate, an installed-browser acceptance checklist and structured learning exports for notes applications.
 
 ## Included
 
@@ -11,6 +11,8 @@ Private beta of the PageTrail local session recorder, based on Webrecorder Archi
 - Direct local downloads, coverage warnings, input blanking in visual HTML and preservation of existing recordings.
 - Controlled, bounded same-origin/path crawling with explicit consent, pause/resume/stop and visible failures.
 - Portable learning ZIP with descriptive detailed notes, quick revision excerpts, images, PDF preservation, provenance and checksums.
+- Course-outline ordering, dominant lesson-scope detection, explicit missing-section reporting and portal-page exclusion.
+- Notes-friendly raster optimization with per-package media accounting; archival originals remain unchanged.
 - Local privacy-minimised diagnostics and bounded/cancellable export workers.
 - Reproducible source checks and beta packaging in GitHub Actions. No npm, browser-store or desktop signing publication.
 
@@ -20,7 +22,7 @@ Only visited, successfully captured content is included. Wait briefly after reve
 
 Old resource-only archives remain available but do not gain visual states retroactively. Do not uninstall or clear extension storage when upgrading. Keep the same installation folder, copy updated extension files there and Reload.
 
-Current local verification: 91 automated tests, type checking, source lint and production-optimized builds passed before Phase 6. `npm run verify:beta` repeats those gates, packages the private beta, validates checksums and ZIP integrity, and rejects private-file patterns or unexpected recordings. Synthetic browser checks covered styled nested course frames, offline original-link replay, controlled crawling, an embedded illustration, single-file navigation and portable-note generation. **Installed Edge debugger capture, direct opening from disk and larger real workloads still need the practical acceptance checklist.** This is not a production-readiness or security certification.
+Current local verification: 97 automated tests, type checking, source lint and production-optimized builds pass. `npm run verify:beta` repeats those gates, packages the beta, validates checksums and ZIP integrity, and rejects private-file patterns or unexpected recordings. Synthetic browser checks cover styled nested course frames, offline original-link replay, controlled crawling, media optimization, single-file navigation and portable-note generation. A completed 11-section interactive workload was retained in outline order with no missing lesson routes and unrelated portal pages excluded; its private content is not part of the repository. **Installed-browser re-export after the final media changes remains part of the practical acceptance checklist.** This is not a production-readiness or security certification.
 
 Preview limits: 60 MB per MIME capture, 500 visual states / approximately 100 MB referenced visual storage per session, and 100 MB final export. Failed/canceled exports do not delete stored recordings.
 

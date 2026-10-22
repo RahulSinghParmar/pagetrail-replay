@@ -47,6 +47,9 @@ const absolute = (url: string, base: string) => {
   }
 };
 const MAX = 100 * 1024 * 1024;
+const MAX_NOTE_ASSET = 5 * 1024 * 1024;
+const MAX_NOTE_MEDIA = 20 * 1024 * 1024;
+const OPTIMIZE_RASTER_OVER = 768 * 1024;
 const portableFilename = (title: string, suffix: string) => {
   const titlePart = title
     .normalize("NFKD")
@@ -191,11 +194,52 @@ export function safeLearningAsset(
   return null;
 }
 
+async function compactImage(asset: LearningAsset): Promise<LearningAsset | null> {
+  if (
+    !asset.mime.toLowerCase().startsWith("image/") ||
+    typeof createImageBitmap !== "function" ||
+    typeof OffscreenCanvas === "undefined"
+  )
+    return null;
+  let bitmap: ImageBitmap | undefined;
+  try {
+    bitmap = await createImageBitmap(
+      new Blob([asset.bytes as BlobPart], { type: asset.mime }),
+    );
+    const scale = Math.min(1, 1600 / bitmap.width, 1600 / bitmap.height);
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = new OffscreenCanvas(width, height);
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.drawImage(bitmap, 0, 0, width, height);
+    const blob = await canvas.convertToBlob({ type: "image/webp", quality: 0.82 });
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    return bytes.length <= MAX_NOTE_ASSET
+      ? { mime: "image/webp", bytes }
+      : null;
+  } catch {
+    return null;
+  } finally {
+    bitmap?.close();
+  }
+}
+
 export async function buildLearningExport(input: {
   title: string;
   documents: LearningDocument[];
   coverage: string;
   warnings?: string[];
+  organization?: {
+    inputDocuments: number;
+    outputSections: number;
+    omittedShells: number;
+    consolidatedDuplicates: number;
+    excludedOutOfScope?: number;
+    detectedOutlineItems?: number;
+    capturedOutlineItems?: number;
+    missingOutlineItems?: number;
+  };
   resolveAsset(
     doc: LearningDocument,
     url: string,
@@ -225,9 +269,15 @@ export async function buildLearningExport(input: {
     sha256: string;
   }[] = [];
   const assetUrls = new Map<string, Promise<string | null>>();
+  const assetFailures = new Map<string, string>();
   let budget = 0,
     inputBytes = 0,
-    nodes = 0;
+    nodes = 0,
+    mediaBytes = 0,
+    optimizedMedia = 0,
+    optimizedInputBytes = 0,
+    optimizedOutputBytes = 0,
+    omittedMedia = 0;
   const add = (name: string, bytes: Uint8Array) => {
     budget += bytes.length;
     if (budget > MAX)
@@ -255,9 +305,40 @@ export async function buildLearningExport(input: {
       assetUrls.set(
         key,
         (async () => {
-          const raw = await input.resolveAsset(doc, url);
+          let raw = await input.resolveAsset(doc, url);
+          const originalBytes = raw?.bytes.length || 0;
+          let optimized = false;
+          const raster =
+            raw && /image\/(?:png|jpeg|gif|webp)/i.test(raw.mime.split(";")[0]);
+          if (raw && raster && raw.bytes.length > OPTIMIZE_RASTER_OVER) {
+            const compact = await compactImage(raw);
+            if (
+              compact &&
+              (raw.bytes.length > MAX_NOTE_ASSET ||
+                compact.bytes.length <= raw.bytes.length * 0.9)
+            ) {
+              raw = compact;
+              optimized = true;
+            } else if (raw.bytes.length > MAX_NOTE_ASSET) {
+              assetFailures.set(
+                key,
+                "omitted from the notes package; original remains in the source archive",
+              );
+              omittedMedia++;
+              warnings.push(
+                `${doc.id}: asset omitted from the notes package because it exceeds 5 MB; the original remains in the source archive: ${
+                  safeSource(url) || "embedded resource"
+                }`,
+              );
+              return null;
+            }
+          }
           const asset = raw && safeLearningAsset(raw);
           if (!asset) {
+            assetFailures.set(
+              key,
+              raw ? "unsupported notes attachment" : "not captured",
+            );
             warnings.push(
               `${doc.id}: attachment missing, unsupported or too large: ${
                 safeSource(url) || "embedded resource"
@@ -268,7 +349,26 @@ export async function buildLearningExport(input: {
           const digest = await hash(asset.bytes);
           const path = `assets/${digest}.${asset.extension}`;
           if (!files.has(path)) {
+            if (mediaBytes + asset.bytes.length > MAX_NOTE_MEDIA) {
+              assetFailures.set(
+                key,
+                "omitted from the notes package; original remains in the source archive",
+              );
+              omittedMedia++;
+              warnings.push(
+                `${doc.id}: asset omitted because the notes-package media budget is 20 MB; the original remains in the source archive: ${
+                  safeSource(url) || "embedded resource"
+                }`,
+              );
+              return null;
+            }
             add(path, asset.bytes);
+            mediaBytes += asset.bytes.length;
+            if (optimized) {
+              optimizedMedia++;
+              optimizedInputBytes += originalBytes;
+              optimizedOutputBytes += asset.bytes.length;
+            }
             assets.push({
               path,
               mime: asset.mime,
@@ -276,6 +376,7 @@ export async function buildLearningExport(input: {
               sha256: digest,
             });
           }
+          assetFailures.delete(key);
           return path;
         })(),
       );
@@ -285,7 +386,7 @@ export async function buildLearningExport(input: {
     doc: (typeof docs)[number];
     html: string;
     markdown: string;
-    excerpts: string[];
+    excerpts: { text: string; kind: "heading" | "point" }[];
     mode: string;
   }[] = [];
   for (const doc of docs) {
@@ -307,11 +408,25 @@ export async function buildLearningExport(input: {
         "EXPORT_TOO_LARGE",
         "A learning document exceeds 10 MB.",
       );
-    const excerpts: string[] = [];
-    const excerpt = (s: string) => {
+    const excerpts: { text: string; kind: "heading" | "point" }[] = [];
+    const excerpt = (s: string, kind: "heading" | "point") => {
       const clean = s.replace(/\s+/g, " ").trim();
-      if (clean && excerpts.length < 6 && !excerpts.includes(clean))
-        excerpts.push(clean.length > 240 ? clean.slice(0, 240) + "…" : clean);
+      const key = clean.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+      if (
+        clean.length >= 12 &&
+        /\p{L}/u.test(clean) &&
+        !/^(?:skip to lesson|top of page|continue|more|back|next|previous)$/i.test(clean) &&
+        excerpts.length < 10 &&
+        !excerpts.some(
+          (item) =>
+            item.text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim() ===
+            key,
+        )
+      )
+        excerpts.push({
+          text: clean.length > 260 ? clean.slice(0, 260) + "…" : clean,
+          kind,
+        });
     };
     type Pair = { html: string; markdown: string };
     const combine = (pairs: Pair[]): Pair => ({
@@ -373,14 +488,16 @@ export async function buildLearningExport(input: {
         const url = absolute(attr(n, "src"), doc.url),
           alt = attr(n, "alt") || "Captured image";
         const path = url && (await attachment(doc, url));
+        const reason =
+          (url && assetFailures.get(doc.id + "\n" + url)) || "not captured";
         return path
           ? {
               html: `<img src="${path}" alt="${e(alt)}">`,
               markdown: `![${md(alt)}](${path})`,
             }
           : {
-              html: `<p>[Image unavailable: ${e(alt)}]</p>`,
-              markdown: `[Image unavailable: ${md(alt)}]`,
+              html: `<p>[Image unavailable — ${e(reason)}: ${e(alt)}]</p>`,
+              markdown: `[Image unavailable — ${md(reason)}: ${md(alt)}]`,
             };
       }
       if (tag === "pre") {
@@ -440,14 +557,24 @@ export async function buildLearningExport(input: {
         };
       }
       if (/^h[1-6]$/.test(tag)) {
-        excerpt(visibleText(n));
+        excerpt(visibleText(n), "heading");
         const level = Math.min(6, Number(tag[1]) + 2);
         return {
           html: `<h${level}>${body.html}</h${level}>`,
           markdown: `\n\n${"#".repeat(level)} ${body.markdown.trim()}\n\n`,
         };
       }
-      if (tag === "p" || tag === "li") excerpt(visibleText(n));
+      if (tag === "p") excerpt(visibleText(n), "point");
+      if (tag === "li") {
+        const ownText = children(n)
+          .filter(
+            (child) =>
+              !("tagName" in child) || !["ul", "ol"].includes(child.tagName),
+          )
+          .map(visibleText)
+          .join(" ");
+        excerpt(ownText, "point");
+      }
       if (tag === "ul" || tag === "ol") {
         const items = await Promise.all(
           children(n)
@@ -590,7 +717,7 @@ export async function buildLearningExport(input: {
       );
     }
     if (!doc.html) {
-      excerpt(doc.text || "");
+      excerpt(doc.text || "", "point");
       warnings.push(
         `${doc.id}: text-only source; original structure and attachments unavailable.`,
       );
@@ -600,93 +727,141 @@ export async function buildLearningExport(input: {
     sections.push({
       doc,
       ...result,
+      markdown: result.markdown
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim(),
       excerpts,
       mode: doc.html ? "saved-html" : "recorded-text",
     });
   }
+  const sourceReference = (value: string) => {
+    const safe = safeSource(value);
+    if (!safe) return "";
+    try {
+      const url = new URL(safe);
+      for (const key of [...url.searchParams.keys()])
+        if (/(?:auth|code|credential|jwt|key|secret|session|signature|token)/i.test(key))
+          url.searchParams.delete(key);
+      return url.href;
+    } catch {
+      return safe;
+    }
+  };
   const metadata = (doc: (typeof docs)[number]) =>
-    `Capture: ${doc.capture} · ${doc.time || "time unavailable"} · Source: ${
-      safeSource(doc.url) || "unavailable"
-    }`;
+    `${doc.capture}${doc.time ? ` · ${doc.time}` : ""}`;
   const warningText = [...new Set(warnings)];
   const notice =
-    "Organized captured source material, not AI-generated or validated study notes. Distinct captures and embedded documents remain separate. Quick revision contains source excerpts only; course completion is not inferred.";
+    "Structured from captured source material. Repeated recorder shells and duplicate page states are consolidated. Verify important procedures against the original source; these notes are not a completeness certificate.";
+  const organization = input.organization || {
+    inputDocuments: sections.length,
+    outputSections: sections.length,
+    omittedShells: 0,
+    consolidatedDuplicates: 0,
+    excludedOutOfScope: 0,
+    detectedOutlineItems: 0,
+    capturedOutlineItems: 0,
+    missingOutlineItems: 0,
+  };
+  const scopeDiagnostic = organization.excludedOutOfScope
+    ? `\n- Excluded **${organization.excludedOutOfScope}** captured page section${organization.excludedOutOfScope === 1 ? "" : "s"} outside the dominant course scope.`
+    : "";
+  const outlineDiagnostic = organization.detectedOutlineItems
+    ? `\n- Captured settled content for **${organization.capturedOutlineItems || 0} of ${organization.detectedOutlineItems}** detected course-outline sections${organization.missingOutlineItems ? `; **${organization.missingOutlineItems}** section${organization.missingOutlineItems === 1 ? " was" : "s were"} missing from this recording` : ""}.`
+    : "";
+  const mediaDiagnostic = `\n- Included **${assets.length}** local media file${assets.length === 1 ? "" : "s"} (${mediaBytes} bytes)${optimizedMedia ? `; optimized **${optimizedMedia}** large raster image${optimizedMedia === 1 ? "" : "s"} from ${optimizedInputBytes} to ${optimizedOutputBytes} bytes` : ""}${omittedMedia ? `; omitted **${omittedMedia}** media reference${omittedMedia === 1 ? "" : "s"} under package limits` : ""}.`;
+  const sourceList = sections
+    .map((section) => {
+      const source = sourceReference(section.doc.url);
+      return `- **${md(section.doc.title)}** — ${md(metadata(section.doc))}${
+        source
+          ? ` · [Original captured page](<${source.replace(/</g, "%3C").replace(/>/g, "%3E")}>)`
+          : ""
+      }`;
+    })
+    .join("\n");
   const markdown = `# ${md(
     input.title,
-  )}\n\n> ${notice}\n\n## Capture coverage\n\n${md(
-    input.coverage,
-  )}\n\n## Contents\n\n${sections
-    .map((s) => `- **${md(s.doc.title)} · ${md(s.doc.capture)}**`)
+  )}\n\n> ${notice}\n\n## Course outline\n\n${sections
+    .map((s, index) => `${index + 1}. **${md(s.doc.title)}**`)
     .join("\n")}\n\n${sections
     .map(
       (s) =>
-        `## ${md(s.doc.title)}\n\n${md(
-          metadata(s.doc),
-        )}\n\n${s.markdown.trim()}`,
+        `## ${md(s.doc.title)}\n\n${s.markdown}`,
     )
-    .join("\n\n---\n\n")}\n\n## Export warnings\n\n${
-    warningText.length
-      ? warningText.map((w) => "- " + md(w)).join("\n")
-      : "No export warnings. This does not certify capture completeness."
-  }\n`;
-  const revision = `# Quick revision — source excerpts\n\n> These excerpts are selected mechanically from headings, paragraphs and list items. They are not a complete summary or validated guidance. Use the exact section references below in the detailed-notes page.\n\n${sections
+    .join("\n\n---\n\n")}\n\n## Source references\n\n${sourceList}\n\n## Capture diagnostics\n\n- Organized **${organization.inputDocuments}** captured documents into **${organization.outputSections}** reading sections.\n- Omitted **${organization.omittedShells}** recorder/player shells and consolidated **${organization.consolidatedDuplicates}** repeated sections.${scopeDiagnostic}${outlineDiagnostic}${mediaDiagnostic}\n- ${md(input.coverage)}\n- ${warningText.length ? `${warningText.length} technical warning${warningText.length === 1 ? "" : "s"} recorded in \`manifest.json\`.` : "No technical export warnings were recorded."}\n`;
+  const revisionSeen = new Set<string>();
+  const revisionSections = sections
     .map(
-      (s) =>
-        `## ${md(s.doc.title)}\n\n${md(metadata(s.doc))}\n\n${s.excerpts
-          .map((v) => "- " + md(v))
-          .join("\n")}\n\nDetailed source: **${md(s.doc.title)} · ${md(
-          s.doc.capture,
-        )}** in **${md(outputs.notes.replace(/\.md$/i, ""))}**`,
+      (section) => {
+        const titleKey = section.doc.title.toLowerCase();
+        const points = section.excerpts.filter((item) => {
+          const key = item.text
+            .toLowerCase()
+            .replace(/[^\p{L}\p{N}]+/gu, " ")
+            .trim();
+          if (!key || key === titleKey || revisionSeen.has(key)) return false;
+          revisionSeen.add(key);
+          return true;
+        });
+        return points.length
+          ? `## ${md(section.doc.title)}\n\n${points
+              .map((item) =>
+                item.kind === "heading"
+                  ? `- **${md(item.text)}**`
+                  : `- ${md(item.text)}`,
+              )
+              .join("\n")}`
+          : "";
+      },
     )
-    .join("\n\n")}\n`;
-  let content = sections
+    .filter(Boolean)
+    .join("\n\n");
+  const revision = `# ${md(input.title)} — Quick revision\n\n> Review points selected mechanically from the organized lesson sections. Confirm critical details in the detailed notes or original source.\n\n${revisionSections}\n\nDetailed source: **${md(outputs.notes.replace(/\.md$/i, ""))}**\n`;
+  const content = sections
     .map(
       (s) =>
         `<section id="${s.doc.anchor}"><h2>${e(
           s.doc.title,
-        )}</h2><p class="muted">${e(metadata(s.doc))}</p>${s.html}</section>`,
+        )}</h2>${s.html}</section>`,
     )
     .join("");
-  // index.html is readable on its own; ZIP assets support portable Markdown imports.
-  for (const asset of assets) {
-    const bytes = files.get(asset.path)!;
-    let binary = "";
-    for (let i = 0; i < bytes.length; i += 8192)
-      binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-    const data = `data:${asset.mime};base64,${btoa(binary)}`;
-    content = content
-      .split(`src="${asset.path}"`)
-      .join(`src="${data}"`)
-      .split(`href="${asset.path}"`)
-      .join(`href="${data}"`);
-  }
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none';img-src data:;style-src 'unsafe-inline';base-uri 'none';form-action 'none'"><title>${e(
+  // The learning ZIP keeps one copy of each asset. The separate website-session
+  // export remains the self-contained single-HTML format.
+  const htmlSources = sections
+    .map((section) => {
+      const source = sourceReference(section.doc.url);
+      return `<li><strong>${e(section.doc.title)}</strong> — ${e(
+        metadata(section.doc),
+      )}${source ? ` · <a href="${e(source)}" rel="noreferrer">original captured page</a>` : ""}</li>`;
+    })
+    .join("");
+  const htmlScopeDiagnostic = organization.excludedOutOfScope
+    ? `<li>Excluded ${organization.excludedOutOfScope} captured page section${organization.excludedOutOfScope === 1 ? "" : "s"} outside the dominant course scope.</li>`
+    : "";
+  const htmlOutlineDiagnostic = organization.detectedOutlineItems
+    ? `<li>Captured settled content for ${organization.capturedOutlineItems || 0} of ${organization.detectedOutlineItems} detected course-outline sections${organization.missingOutlineItems ? `; ${organization.missingOutlineItems} section${organization.missingOutlineItems === 1 ? " was" : "s were"} missing from this recording` : ""}.</li>`
+    : "";
+  const htmlMediaDiagnostic = `<li>Included ${assets.length} local media file${assets.length === 1 ? "" : "s"} (${mediaBytes} bytes)${optimizedMedia ? `; optimized ${optimizedMedia} large raster image${optimizedMedia === 1 ? "" : "s"} from ${optimizedInputBytes} to ${optimizedOutputBytes} bytes` : ""}${omittedMedia ? `; omitted ${omittedMedia} media reference${omittedMedia === 1 ? "" : "s"} under package limits` : ""}.</li>`;
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none';img-src 'self' data:;style-src 'unsafe-inline';base-uri 'none';form-action 'none'"><title>${e(
     input.title,
   )}</title><style>body{font:17px/1.65 system-ui;color:#193e31;background:#edf4ef;max-width:1000px;margin:30px auto;padding:24px}section,nav,aside{background:white;padding:24px;margin:20px 0;border-radius:12px}a{color:#21624c}img{max-width:100%;height:auto}pre{white-space:pre-wrap;background:#f4f6f5;padding:16px}table{border-collapse:collapse;display:block;overflow:auto}td,th{border:1px solid #aac1b4;padding:8px}blockquote{border-left:4px solid #aac1b4;padding-left:18px}.muted{font-size:13px;overflow-wrap:anywhere;color:#50695d}section{scroll-margin-top:20px}</style></head><body><header><small>PAGETRAIL · PORTABLE LEARNING EXPORT</small><h1>${e(
     input.title,
-  )}</h1><p>${e(notice)}</p><p>${e(
-    input.coverage,
-  )}</p></header><nav><h2>Contents</h2><ol>${sections
+  )}</h1><p>${e(notice)}</p></header><nav><h2>Course outline</h2><ol>${sections
     .map(
       (s) =>
-        `<li><a href="#${s.doc.anchor}">${e(s.doc.title)} · ${e(
-          s.doc.capture,
-        )}</a></li>`,
+        `<li><a href="#${s.doc.anchor}">${e(s.doc.title)}</a></li>`,
     )
     .join(
       "",
-    )}</ol></nav>${content}<aside><h2>Export warnings</h2><ul>${warningText
-    .map((w) => `<li>${e(w)}</li>`)
-    .join(
-      "",
-    )}</ul><p>Online links remain labelled. No original scripts, forms or automatic remote requests are included.</p></aside></body></html>`;
+    )}</ol></nav>${content}<aside><h2>Source references</h2><ul>${htmlSources}</ul><h2>Capture diagnostics</h2><ul><li>Organized ${organization.inputDocuments} captured documents into ${organization.outputSections} reading sections.</li><li>Omitted ${organization.omittedShells} recorder/player shells and consolidated ${organization.consolidatedDuplicates} repeated sections.</li>${htmlScopeDiagnostic}${htmlOutlineDiagnostic}${htmlMediaDiagnostic}<li>${e(input.coverage)}</li><li>${warningText.length} technical warning${warningText.length === 1 ? "" : "s"} recorded in manifest.json.</li></ul><p>Online links remain labelled. No original scripts, forms or automatic remote requests are included.</p></aside></body></html>`;
   add(outputs.notes, encode(markdown));
   add(outputs.revision, encode(revision));
   add(outputs.reader, encode(html));
   add(
     outputs.instructions,
     encode(
-      `PAGETRAIL PORTABLE LEARNING EXPORT\n\nUnzip this package. Open ${outputs.reader} for offline reading; its images and supported attachments are embedded, so this HTML can also be copied alone. Import "${outputs.notes}" and "${outputs.revision}" into a notes app while keeping the assets folder beside them. The quick-revision document contains labelled source excerpts, not AI-generated notes.\n\nAFFiNE validation: its Markdown-with-media ZIP importer preserves headings, nested lists, tables, code, Unicode and saved PNG/SVG images. It does not preserve custom section anchors or automatically attach linked PDF files. PageTrail therefore uses explicit section references instead of false Markdown navigation links. Add any PDF from assets manually if you need it inside AFFiNE; PDFs remain accessible in ${outputs.reader} and in the unzipped assets folder. Other notes apps may behave differently. No notes-app account or API is contacted by PageTrail.\n\n${outputs.manifest} lists sources, capture times, structure fallback, export warnings and SHA-256 checksums for every other file. Same-URL captures and frames remain separate. Supported saved images and PDFs are local; unavailable assets are explicitly reported. SVG geometry is sanitized, so some illustrations may differ. PDFs are original saved documents; open them in a PDF viewer. Online links are labelled. No quizzes, unvisited lessons or completion status are inferred.\n\nKeep the original WACZ for interactive replay and recovery. This package is a reading/migration copy, not a full website or a completeness certificate. Source URLs/content may contain private information; nothing was uploaded.\n`,
+      `PAGETRAIL PORTABLE LEARNING EXPORT\n\nUnzip this package and keep its assets folder beside ${outputs.reader} and the Markdown files. Open ${outputs.reader} for offline reading. Import "${outputs.notes}" and "${outputs.revision}" into a notes app while keeping the assets folder beside them. The package stores one copy of each media file; use the separate website-session export when you need a self-contained single HTML. The package consolidates repeated recorder shells and page states into lesson-centered reading sections. When a repeated course outline is detected, unrelated portal pages are excluded and outline sections without settled captured content are reported. Quick revision contains mechanically selected review points, not validated guidance.\n\nAFFiNE validation: its Markdown-with-media ZIP importer preserves headings, nested lists, tables, code, Unicode and saved PNG/SVG images. It does not preserve custom section anchors or automatically attach linked PDF files. Add any PDF from assets manually if you need it inside AFFiNE; PDFs remain accessible in ${outputs.reader} and in the unzipped assets folder. Raster images over 768 KB are converted to a bounded static WebP preview when the browser supports it and the result is materially smaller. Individual included files remain capped at 5 MB and total note-package media at 20 MB; later media is omitted with an explicit warning when those limits are reached. Originals remain in the source recording and website-session/WACZ exports. Other notes apps may behave differently. No notes-app account or API is contacted by PageTrail.\n\n${outputs.manifest} lists source sections, capture times, organization statistics, media optimization, extraction fallbacks, export warnings and SHA-256 checksums for every other file. Supported saved images and PDFs are local; unavailable assets are explicitly reported. SVG geometry is sanitized, so some illustrations may differ. PDFs are original saved documents; open them in a PDF viewer. Online links are labelled. Assessment-result summaries may be retained when captured, but PageTrail does not infer, reconstruct or answer quiz questions. Unvisited lessons or completion status are not inferred.\n\nKeep the original WACZ or website-session HTML for interactive replay and recovery. This package is a reading/migration copy, not a full website or a completeness certificate. Source URLs/content may contain private information; nothing was uploaded.\n`,
     ),
   );
   input.progress?.({ phase: "building", bytes: budget });
@@ -698,7 +873,7 @@ export async function buildLearningExport(input: {
     })),
   );
   const manifest = {
-    schema: "pagetrail.learning.v1",
+    schema: "pagetrail.learning.v2",
     title: input.title,
     generatedAt: new Date().toISOString(),
     sourceKind: "captured-source",
@@ -706,6 +881,17 @@ export async function buildLearningExport(input: {
     completionStatus: "unknown",
     outputs,
     coverage: input.coverage,
+    organization,
+    media: {
+      maxAssetBytes: MAX_NOTE_ASSET,
+      maxTotalBytes: MAX_NOTE_MEDIA,
+      includedAssets: assets.length,
+      includedBytes: mediaBytes,
+      optimizedAssets: optimizedMedia,
+      optimizedInputBytes,
+      optimizedOutputBytes,
+      omittedReferences: omittedMedia,
+    },
     documents: sections.map((s) => ({
       id: s.doc.id,
       anchor: s.doc.anchor,

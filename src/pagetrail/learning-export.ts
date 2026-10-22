@@ -10,6 +10,7 @@ import type { ExportProgress } from "./export-protocol";
 import type { DBCollection } from "../sw/downloader";
 import type { SavedPage } from "./reading";
 import { OperationError } from "./operations";
+import { organizeLearningDocuments } from "./learning-organize";
 
 export async function createLearningExport(
   id: string,
@@ -19,7 +20,7 @@ export async function createLearningExport(
 ) {
   const visual = await readVisualArchive(id, { progress });
   const assets = new Map(visual.assets.map((asset) => [asset.key, asset]));
-  const documents: LearningDocument[] = [];
+  let documents: LearningDocument[] = [];
   const origins = new Map<string, VisualState>();
   const warnings: string[] = visual.meta.error
     ? [
@@ -109,8 +110,20 @@ export async function createLearningExport(
         "No visual capture states were available. Saved page HTML/text is used; embedded or dynamic content may be incomplete.",
       );
     }
+    const organized = organizeLearningDocuments(documents);
+    documents = organized.documents;
+    if (organized.missingOutline.length) {
+      const labels = organized.missingOutline
+        .map((item) => item.title)
+        .filter(Boolean)
+        .join(", ");
+      warnings.push(
+        `Course outline exposed ${organized.stats.detectedOutlineItems} sections, but ${organized.stats.capturedOutlineItems} had settled captured content. Missing from the learning notes: ${labels || `${organized.missingOutline.length} course section(s)`}. Revisit those sections and wait for them to settle before stopping the recording.`,
+      );
+    }
     const result = await buildLearningExport({
       title:
+        organized.suggestedTitle ||
         title ||
         visual.states[0]?.title ||
         collection?.config.metadata?.title ||
@@ -118,6 +131,7 @@ export async function createLearningExport(
       documents,
       coverage: coverageText(coverage),
       warnings,
+      organization: organized.stats,
       progress,
       resolveAsset: async (doc, url) => {
         const state = origins.get(doc.id);

@@ -1,5 +1,5 @@
-name: Bug Report
-description: If something isn't working as expected and you're sure your issue is reproducible, please file this type of issue!
+name: Bug report
+description: Report a reproducible PageTrail capture, export or replay problem.
 title: "[Bug]: "
 labels: ["bug"]
 body:
@@ -7,9 +7,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: ArchiveWeb.page Version
-      description: 'This can be found on the app home page under "About"'
-      placeholder: "v0.11.3"
+      label: PageTrail version
+      description: Find this on the extension card or PageTrail dashboard.
+      placeholder: "0.1.2-beta.1"
     validations:
       required: true
   # What did the user expect to happen? What was the actual behavior?
@@ -17,14 +17,36 @@ body:
     attributes:
       label: What did you expect to happen? What happened instead?
       description: |
-        "I was trying to archive a page however..."
+        Explain the expected result and what PageTrail produced instead.
 
-        Please submit any screenshots/videos that can be used to understand how to reproduce the issue. You can attach images by clicking this area to highlight it and then dragging files into the browser window.
-
-        If something wasn't captured in the way you expect please include a link to the archived item if possible.
+        Use invented or public sample content. Do not attach private recordings,
+        confidential pages, credentials, browser profiles or unreviewed diagnostics.
     validations:
       required: true
   # Step-by-step reproduction instructions
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser, browser version, operating system and installation type.
+      placeholder: "Edge 130, macOS 15, unpacked extension"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Recording session
+        - Controlled crawl
+        - Website-session HTML
+        - Portable learning ZIP
+        - Markdown or text HTML
+        - WACZ or local reader
+        - Installation or upgrade
+        - Other
+    validations:
+      required: true
   - type: textarea
     attributes:
       label: Step-by-step reproduction instructions
@@ -41,3 +63,9 @@ body:
       description: Add any other relevant information here.
     validations:
       required: false
+  - type: checkboxes
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed private content, credentials and sensitive URLs from this report.
+          required: true

@@ -28,6 +28,12 @@ Record the result of each check as Pass, Fail or Not tested:
 - Markdown, text-only HTML, coverage JSON and portable learning ZIP download without deleting the recording.
 - WACZ opens in the bundled loopback reader; captured original links work and uncaptured destinations remain unavailable.
 - Portable learning ZIP contains two descriptive Markdown notes, `index.html`, `README.txt`, `manifest.json` and `assets/`; AFFiNE import does not create a README note.
+- AFFiNE uses the course-based filenames as document titles and preserves lesson headings. Assigning both imported documents to an AFFiNE collection/folder is recorded as a manual notes-app step.
+- Detailed notes are organized by meaningful lessons/pages rather than recorder frames or `Embedded document` entries; repeated captures, player shells and technical warnings do not dominate the note.
+- When a course outline is detected, unrelated portal/home/catalogue pages are excluded. `manifest.json` and Capture diagnostics report detected, captured and missing outline-section counts; an unvisited lesson is never silently presented as captured.
+- Assessment results may appear as a labelled result section, but quiz questions, answers and completion are not inferred or reconstructed.
+- Quick revision contains concise lesson review points without repeating source URLs and capture metadata for every point.
+- Portable learning ZIP does not duplicate media inside `index.html`; no individual included asset exceeds 5 MB and included media totals at most 20 MB. Raster inputs over 768 KB are optimized before budget accounting when the conversion is materially smaller. `manifest.json` reports included, optimized and omitted media totals; image placeholders distinguish uncaptured media from size-policy omissions, and originals remain available through the source recording and archival exports.
 - Canceling a large export leaves the recording intact and allows a retry.
 - Reloading the extension and reader does not lose a completed recording or a fully imported local WACZ.
 - Local diagnostics remain usable during a failure and contain no page text, URLs, titles, archive IDs, credentials or raw stack traces.
