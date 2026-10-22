@@ -1,12 +1,14 @@
-# PageTrail Replay — 0.1.2 local preview
+# PageTrail Replay — 0.1.2 public beta
 
-## Phase 6 — practical beta verification (October 21, local/unreleased)
+## Phase 6 — practical beta verification (October 21–22, 2026)
 
-Phase 6 adds a repeatable private-beta gate without changing recording data or publishing a release. Run `npm run verify:beta` from the project root. It executes the full PageTrail test suite, TypeScript and source lint; builds the synthetic demos, local reader and production extension; creates the private beta package; verifies its required files, SHA-256 manifest and ZIP integrity; and rejects private-file patterns or unexpected WACZ recordings. The machine-readable result is written to `test/artifacts/beta-verification/beta-verification.json` and remains ignored by Git.
+Phase 6 adds a repeatable beta gate without changing recording data. Run `npm run verify:beta` from the project root. It executes the full PageTrail test suite, TypeScript and source lint; builds the synthetic demos, local reader and production extension; creates the beta package; verifies its required files, SHA-256 manifest and ZIP integrity; and rejects private-file patterns or unexpected WACZ recordings. The machine-readable result is written to `test/artifacts/beta-verification/beta-verification.json` and remains ignored by Git.
 
 Automated success is only the first half of this phase. `BETA-ACCEPTANCE.md` contains the practical installed-Edge checks for in-place reload, preservation of existing recordings, Start/Pause/Resume/Finish, controlled crawl, every export format, cancellation/retry, WACZ replay, portable-note import and privacy-minimised diagnostics. Use invented local content first. Do not uninstall the existing extension, clear its storage, test private courses, publish recordings or treat a synthetic pass as production certification.
 
-The extension label is now **Phase 6 practical beta verification (unreleased)**. Release metadata remains `0.1.2-beta.1`; this phase does not create a commit, tag, GitHub release or browser-store submission.
+The `0.1.2-beta.1` candidate passed the automated gate and an installed-Edge re-export. The authorised interactive workload retained all 11 detected outline sections, resolved all 61 packaged image assets and omitted no media reference. Forty large raster inputs were reduced from 55,598,819 bytes to 2,933,540 bytes, producing a 10,797,273-byte learning package. The source recording still reported one visual gap; the release does not claim capture completeness or production/security certification. No browser-store submission is included.
+
+The sections below retain the development history that led to this beta.
 
 ## Phase 5 — portable learning exports (October 20, local/unreleased)
 
@@ -85,9 +87,9 @@ Supplementary engine fetching is disabled in this phase: no independent URL retr
 
 For the synthetic browser integration fixture, build `npm run build:export-demo` and run `npm run demo:capture`, then open `http://127.0.0.1:4178/`. It uses the production recorder adapter, native archive/visual/coverage databases and exporters, but explicitly simulated debugger events and invented payloads. It does **not** prove actual Edge debugger capture or private-course compatibility. See `test/VERIFICATION.md` for executed checks.
 
-## Unreleased local export/diagnostics work — October 17, 2026
+## Historical local export/diagnostics work — October 17, 2026
 
-The published GitHub beta is unchanged. The current source and `dist/ext` contain an **unreleased local build** addressing an unresponsive export interface. Keep the existing installation folder and Reload that same extension in Edge after finishing any active recording. Do not uninstall, clear storage or start by recording the whole course again; first retry an existing saved session.
+At that point, the published GitHub beta was unchanged and `dist/ext` contained a local build addressing an unresponsive export interface. The guidance was to keep the existing installation folder and reload that same extension in Edge after finishing any active recording, without uninstalling or clearing storage.
 
 The library is simplified to one format selector and Export button per recording. Website-session HTML retains captured layout; Markdown and text-only HTML remain secondary reading formats, while WACZ retains original-resource replay. Nothing is uploaded by these controls.
 

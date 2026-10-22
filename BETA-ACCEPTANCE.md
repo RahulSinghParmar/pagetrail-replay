@@ -12,6 +12,10 @@ npm run verify:beta
 
 Pass means the PageTrail tests, TypeScript, source lint, production builds, release-file checks, checksums and ZIP integrity passed. The JSON evidence is written to `test/artifacts/beta-verification/beta-verification.json`. This does not replace the installed-browser checks below.
 
+## Current acceptance result
+
+The `0.1.2-beta.1` candidate passed the automated gate and an installed-Edge re-export on October 22, 2026. The authorised interactive workload retained all 11 detected outline sections, reported no missing section, resolved all 61 packaged image assets and omitted no media reference. Forty large raster inputs were reduced from 55,598,819 bytes to 2,933,540 bytes; the final portable learning ZIP was 10,797,273 bytes. The source recording still reported one visual gap, so the release remains a public beta and does not claim capture completeness.
+
 ## Installed Edge acceptance
 
 Preserve existing recordings: finish any active recording, keep the same extension folder and use **Reload** on the existing Edge extension card. Do not uninstall the extension or clear its storage.

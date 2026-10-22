@@ -2,7 +2,7 @@
   "name": "PageTrail Replay (Local Preview)",
   "description": "Record visited page states, frames and resources locally. Export one self-contained session HTML or a WACZ archive.",
   "version": "0.1.2",
-  "version_name": "PageTrail Replay 0.1.2 · Phase 6 practical beta verification (unreleased)",
+  "version_name": "PageTrail Replay 0.1.2 · Public beta",
   "permissions": [
     "debugger",
     "tabs",

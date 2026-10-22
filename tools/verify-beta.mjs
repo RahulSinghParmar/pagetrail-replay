@@ -101,7 +101,7 @@ try {
 
   await run("Synthetic demo build", npm, ["run", "build:export-demo"]);
   await run("Reader build", npm, ["run", "build:reader"]);
-  await run("Extension build and private beta package", npm, [
+  await run("Extension build and beta package", npm, [
     "run",
     "package:pagetrail",
   ]);
@@ -137,7 +137,7 @@ try {
   )
     throw new Error("Packaged extension manifest identity is incorrect.");
   if (manifest.update_url)
-    throw new Error("Private beta manifest must not define an update URL.");
+    throw new Error("Beta manifest must not define an update URL.");
 
   const packagedFiles = await walk(packageRoot);
   const forbidden = packagedFiles.filter((path) =>
@@ -176,7 +176,7 @@ try {
       "TypeScript",
       "source lint",
       "production demo, reader and extension builds",
-      "private beta package structure",
+      "beta package structure",
       "packaged SHA-256 checksums",
       "package ZIP integrity",
       "private-file and unexpected-WACZ exclusion",
